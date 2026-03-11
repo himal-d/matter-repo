@@ -1,2 +1,0 @@
-SRCREV_remove = "c58ad3367bf27f4b4a4d5b1bca29ebd574731c5d"
-SRCREV = "cadc68b5aef20f28648072cf07a8f155639b81dd"
