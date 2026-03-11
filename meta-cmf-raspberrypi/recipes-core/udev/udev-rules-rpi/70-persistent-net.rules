@@ -1,0 +1,2 @@
+SUBSYSTEM=="net", ACTION=="add", ATTR{dev_id}=="0x0", ATTR{type}=="1", KERNEL=="eth*", NAME="eth0"
+SUBSYSTEM=="net", ACTION=="add", ATTR{dev_id}=="0x0", ATTR{type}=="1", KERNEL=="eth*", NAME="eth1", KERNELS=="usb*" , RUN+="/lib/rdk/bring-eth1-under-brlan0.sh"

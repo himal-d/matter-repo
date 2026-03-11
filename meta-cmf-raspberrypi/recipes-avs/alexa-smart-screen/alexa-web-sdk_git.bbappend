@@ -1,0 +1,2 @@
+SRC_URI_remove += "${@bb.utils.contains('DISTRO_FEATURES', 'voice-chrome', 'file://${RDKROOT}/downloads/AlexaSmartScreenVoiceChrome-1.1.0.tar;name=voicechrome;destsuffix=voicechrome', '', d)}"
+SRC_URI += "${@bb.utils.contains('DISTRO_FEATURES', 'voice-chrome', 'https://artifactory.rdkcentral.com/artifactory/alexa/voice_chrome/1.1.0/AlexaSmartScreenVoiceChrome-1.1.0.tar;name=voicechrome;destsuffix=voicechrome', '', d)}"

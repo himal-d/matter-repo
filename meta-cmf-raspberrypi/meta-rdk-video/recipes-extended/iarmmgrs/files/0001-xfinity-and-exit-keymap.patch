@@ -1,0 +1,35 @@
+From 43b970fdc6177dad255d757f22d464c7b50164e5 Mon Sep 17 00:00:00 2001
+From: Simon Chung <simon.chung@rdkcentral.com>
+Date: Sat, 9 Sep 2023 18:10:08 +0100
+Subject: [PATCH] xfinity-and-exit-keymap
+
+Change-Id: I5c89e6e1dd0ab75483f95816d3397642dd483b73
+---
+ hal/include/comcastIrKeyCodes.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hal/include/comcastIrKeyCodes.h b/hal/include/comcastIrKeyCodes.h
+index 664300e..8eb5fec 100755
+--- a/hal/include/comcastIrKeyCodes.h
++++ b/hal/include/comcastIrKeyCodes.h
+@@ -220,7 +220,7 @@ extern "C" {
+ ///< Represents the key for enter. @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+ #define KED_ENTER		                         0x00000086UL
+ ///< Represents the key for exit. @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+-#define KED_EXIT	  	                         0x00000087UL
++#define KED_EXIT	  	                         0x0013002aUL
+ ///< Represents the key for channel up. @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+ #define KED_CHANNELUP	  	                   0x00000088UL
+ ///< Represents the key for channel down. @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+@@ -312,7 +312,7 @@ extern "C" {
+ ///< Represents the key for next (alternate remote). @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+ #define KED_NEXT		                         0x000000C4UL
+ ///< Represents the key for menu (alternate remote). @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+-#define KED_MENU       		                   0x000000C0UL
++#define KED_MENU       		                   0x001d0020UL
+ ///< Represents the key for input key. @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+ #define KED_INPUTKEY		                      0x000000D0UL
+ ///< Represents the key for live. @todo : All the definitions should be prefixed with IR_. Will do it in the next phase
+-- 
+2.37.2
+

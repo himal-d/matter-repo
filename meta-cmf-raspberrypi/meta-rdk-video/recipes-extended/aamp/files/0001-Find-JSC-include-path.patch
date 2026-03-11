@@ -1,0 +1,31 @@
+Date: Thu, 6 Jan 2022 21:32:27 +0000
+From: 2e5dc807b7fa692a8ef6be6eb90050a437e9b724 Mon Sep 17 00:00:00 2001
+Subject: Find JSC include path
+Source: COMCAST
+License: GPLV2
+Upstream-Status: Pending
+Signed-off-by: Eugene Mutavchi <Ievgen_Mutavchi@comcast.com>
+
+---
+ CMakeLists.txt | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2f9c5a0830..b29ec3eaa3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -56,8 +56,9 @@ if(CMAKE_QT5WEBKIT_JSBINDINGS)
+ 	include_directories(${STAGING_INCDIR}/webkit-apis/ForwardingHeaders)
+ elseif(CMAKE_WPEWEBKIT_JSBINDINGS)
+ 	message("CMAKE_QT5WEBKIT_JSBINDINGS not set, CMAKE_WPEWEBKIT_JSBINDINGS is set, Finding JavaScriptCore")
+-	find_path (STAGING_INCDIR JavaScriptCore)
+-	include_directories(${STAGING_INCDIR}/JavaScriptCore)
++	pkg_search_module(PC_WPE_WEBKIT wpe-webkit-deprecated-0.1 wpe-webkit-1.0)
++	find_path (JSC_INCDIR JavaScriptCore/JavaScript.h HINTS ${PC_WPE_WEBKIT_INCLUDEDIR} ${PC_WPE_WEBKIT_INCLUDE_DIRS})
++	include_directories(${JSC_INCDIR})
+ else()
+ 	message("CMAKE_QT5WEBKIT_JSBINDINGS not set, CMAKE_WPEWEBKIT_JSBINDINGS not set")
+ endif()
+-- 
+2.25.1
+

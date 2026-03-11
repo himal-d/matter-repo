@@ -1,0 +1,27 @@
+source : https://github.com/morrownr/8812au-20210630
+diff --git a/Makefile b/Makefile
+index 1bbd315..7fa7fa3 100755
+--- a/Makefile
++++ b/Makefile
+@@ -40,7 +40,7 @@ EXTRA_LDFLAGS += --strip-debug
+ ########################## WIFI IC ############################
+ CONFIG_RTL8812A = y
+ CONFIG_RTL8821A = y
+-CONFIG_RTL8814A = y
++CONFIG_RTL8814A = n 
+ ######################### Interface ###########################
+ CONFIG_USB_HCI = y
+ ########################## Features ###########################
+diff --git a/os_dep/linux/os_intfs.c b/os_dep/linux/os_intfs.c
+index b240241..afdcf68 100644
+--- a/os_dep/linux/os_intfs.c
++++ b/os_dep/linux/os_intfs.c
+@@ -23,7 +23,7 @@
+
+ #endif
+
+-
++struct wireless_dev *wdev;
+ MODULE_LICENSE("GPL");
+ MODULE_DESCRIPTION("Realtek Wireless Lan Driver");
+ MODULE_AUTHOR("Realtek Semiconductor Corp.");

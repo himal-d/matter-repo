@@ -1,0 +1,32 @@
+diff --git a/rpc/srv/dsAudio.c b/rpc/srv/dsAudio.c
+index 38f1120..57e5351 100755
+--- a/rpc/srv/dsAudio.c
++++ b/rpc/srv/dsAudio.c
+@@ -339,7 +339,7 @@ void AudioConfigInit()
+                                 _AudioLevel = device::HostPersistence::getInstance().getDefaultProperty("SPEAKER0.audio.Level");
+                             }
+                             catch(...) {
+-                                _AudioLevel = "40";
++                                _AudioLevel = "100";
+                             }
+                     }
+                     m_audioLevel = atof(_AudioLevel.c_str());
+@@ -360,7 +360,7 @@ void AudioConfigInit()
+                                 _AudioLevel = device::HostPersistence::getInstance().getDefaultProperty("HEADPHONE0.audio.Level");
+                             }
+                             catch(...) {
+-                                _AudioLevel = "40";
++                                _AudioLevel = "100";
+                             }
+                     }
+                     m_audioLevel = atof(_AudioLevel.c_str());
+@@ -380,7 +380,7 @@ void AudioConfigInit()
+                                 _AudioLevel = device::HostPersistence::getInstance().getDefaultProperty("HDMI0.audio.Level");
+                             }
+                             catch(...) {
+-                                _AudioLevel = "40";
++                                _AudioLevel = "100";
+                             }
+                     }
+                     m_audioLevel = atof(_AudioLevel.c_str());
+

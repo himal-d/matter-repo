@@ -1,0 +1,15 @@
+Index: netsrvmgr/src/main/src/netSrvMgrMain.cpp
+===================================================================
+--- netsrvmgr.orig/src/main/src/netSrvMgrMain.cpp
++++ netsrvmgr/src/main/src/netSrvMgrMain.cpp
+@@ -675,6 +675,10 @@ bool isFeatureEnabled(const char* featur
+ // pni_controller.service determines, enables and configures the interface to make active (wifi/ethernet)
+ static void launch_pni_controller ()
+ {
++    //Temporary fix for RDKUI-624 until fix from UI is in place
++    LOG_INFO( "systemctl reset-failed pni_controller.service");
++    system("systemctl reset-failed pni_controller.service");
++
+     LOG_INFO( "systemctl restart pni_controller.service");
+     system("systemctl restart pni_controller.service");
+ }

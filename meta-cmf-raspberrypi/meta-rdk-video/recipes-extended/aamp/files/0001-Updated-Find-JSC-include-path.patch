@@ -1,0 +1,36 @@
+Date: Thu, 6 Jan 2022 21:32:27 +0000
+From: 1e495beaacf78f4e8ebbbb325c368d05ed7191d8 Tue Oct 18 18:29:27 2022
+Subject: Find JSC include path
+Source: COMCAST
+Upstream-Status: Pending
+Signed-off-by: sivasubramanian <sivasubramanian.patchaiperumal@ltts.com>
+
+commit 1e495beaacf78f4e8ebbbb325c368d05ed7191d8
+Author: sivasubramanian <sivasubramanian.patchaiperumal@ltts.com>
+Date:   Tue Oct 18 18:29:27 2022 +0000
+
+    DELIA-58481:[22Q4_sprint][10/17] AAMP NGs are failing in do_patch
+    
+    Reason for change: Rebase 0001-Find-JSC-include-path.patch due to recent
+    changes in AAMP CMakeLists.txt
+    Test Procedure: Build AAMP NG
+    Risks: Low
+    
+    Signed-off-by: sivasubramanian <sivasubramanian.patchaiperumal@ltts.com>
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8150d2dc..14d30d75 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -55,8 +55,9 @@ if(CMAKE_QT5WEBKIT_JSBINDINGS)
+ 	include_directories(${STAGING_INCDIR}/webkit-apis/ForwardingHeaders)
+ elseif(CMAKE_WPEWEBKIT_JSBINDINGS)
+ 	message("CMAKE_QT5WEBKIT_JSBINDINGS not set, CMAKE_WPEWEBKIT_JSBINDINGS is set, Finding JavaScriptCore")
+-	find_path (STAGING_INCDIR JavaScriptCore)
+-	include_directories(${STAGING_INCDIR}/JavaScriptCore)
++	pkg_search_module(PC_WPE_WEBKIT wpe-webkit-deprecated-0.1 wpe-webkit-1.0)
++	find_path (JSC_INCDIR JavaScriptCore/JavaScript.h HINTS ${PC_WPE_WEBKIT_INCLUDEDIR} ${PC_WPE_WEBKIT_INCLUDE_DIRS})
++	include_directories(${JSC_INCDIR})
+ elseif(CMAKE_WEBKITGTK_JSBINDINGS)
+ 	message("CMAKE_WEBKITGTK_JSBINDINGS is set, Finding JavaScriptCore")
+ 	pkg_check_modules(JAVASCRIPTCOREGTK REQUIRED javascriptcoregtk-4.0)

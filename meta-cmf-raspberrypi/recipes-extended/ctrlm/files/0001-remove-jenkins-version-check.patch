@@ -1,0 +1,26 @@
+From 0a23e4dcdea0f003d4db15dd22b8b3c2d8387ba3 Mon Sep 17 00:00:00 2001
+From: Simon Chung <simon.chung@rdkcentral.com>
+Date: Thu, 31 Aug 2023 12:25:30 +0100
+Subject: [PATCH] remove-jenkins-version-check
+
+Change-Id: I65f03e8d2e92cf63a28a09d6f9b521fe300e2135
+---
+ src/ctrlm_main.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/ctrlm_main.cpp b/src/ctrlm_main.cpp
+index cb020fb..0226a7e 100644
+--- a/src/ctrlm_main.cpp
++++ b/src/ctrlm_main.cpp
+@@ -586,7 +586,7 @@ int main(int argc, char *argv[]) {
+    XLOGD_INFO("load version");
+    if(!ctrlm_load_version()) {
+       XLOGD_FATAL("failed to load version");
+-      return(-1);
++      // Do not crash the program here return(-1);
+    }
+
+    // Launch a thread to handle DB writes asynchronously
+--
+2.37.2
+

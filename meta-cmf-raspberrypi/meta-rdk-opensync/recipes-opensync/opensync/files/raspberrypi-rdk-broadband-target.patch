@@ -1,0 +1,25 @@
+From 17b1dbc378cba95dfd072949a48a265ab8bf52e9 Mon Sep 17 00:00:00 2001
+From: Jenkins Slave <jenkins@code.rdkcentral.com>
+Date: Fri, 24 Mar 2023 13:49:44 +0000
+Subject: [PATCH] raspberrypi-rdk-broadband-target
+
+---
+ build/vendor-arch.mk | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/build/vendor-arch.mk b/build/vendor-arch.mk
+index ffd252b..70cb97d 100644
+--- a/build/vendor-arch.mk
++++ b/build/vendor-arch.mk
+@@ -14,7 +14,7 @@
+ #WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ #See the License for the specific language governing permissions and
+ #limitations under the License.
+-RDK_TARGETS = RDKB raspberrypi4-rdk-broadband raspberrypi4-rdk-extender raspberrypi-rdk-broadband raspberrypi4-64-rdk-broadband
++RDK_TARGETS = RDKB raspberrypi4-rdk-broadband raspberrypi4-rdk-extender raspberrypi-rdk-broadband raspberrypi4-64-rdk-broadband raspberrypi4-rdk-broadband-bci raspberrypi4-rdk-broadband-gwprovapp
+ 
+ ifneq ($(filter $(TARGET),$(RDK_TARGETS)),)
+ 
+-- 
+2.37.3
+

@@ -1,0 +1,15 @@
+diff --git a/qamsource/main/rmfqamsrcpriv.cpp b/qamsource/main/rmfqamsrcpriv.cpp
+index 557c0f8..319deff 100755
+--- a/qamsource/main/rmfqamsrcpriv.cpp
++++ b/qamsource/main/rmfqamsrcpriv.cpp
+@@ -3175,8 +3175,8 @@ RMFResult RMFQAMSrcImpl::init_platform()
+ 	}
+ 
+ 	bQAMSrcInited = true;
+-
+-    check_rf_presence();
++        
++        //check_rf_presence();
+ 
+ 	return RMF_RESULT_SUCCESS;
+ }

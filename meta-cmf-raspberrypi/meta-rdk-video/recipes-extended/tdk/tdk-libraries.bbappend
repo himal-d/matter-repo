@@ -1,0 +1,3 @@
+PACKAGE_TYPE = "OSS"
+
+EXTRA_OEMAKE_append = " MFRHAL_LIBS+="$(MFRHAL_LIBS) -lRDKMfrLib " "

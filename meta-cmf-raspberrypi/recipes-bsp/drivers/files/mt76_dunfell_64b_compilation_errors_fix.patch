@@ -1,0 +1,14 @@
+Source: Keerthana Pandurangan <keerthana_pandurangan@comcast.com>
+Subject: Resolved compilation errors for building mt76 driver source code with linux raspberrypi 5.10.y
+
+--- git/eeprom.c	2024-01-12 05:02:34.311235398 +0000
++++ git/eeprom.c	2024-01-12 05:03:21.678606907 +0000
+@@ -109,7 +109,7 @@
+ 
+ 	struct device_node *np = dev->dev->of_node;
+ 
+-	of_get_mac_address(np, phy->macaddr);
++	of_get_mac_address(np);
+ 
+ 	if (!is_valid_ether_addr(phy->macaddr)) {
+ 		eth_random_addr(phy->macaddr);

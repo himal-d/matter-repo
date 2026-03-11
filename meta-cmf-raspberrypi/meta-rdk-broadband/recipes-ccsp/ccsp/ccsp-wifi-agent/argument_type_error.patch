@@ -1,0 +1,44 @@
+From 84f4588e5dad2f463de0751ce18202a516b9b2f5 Mon Sep 17 00:00:00 2001
+From: Simon Chung <simon.chung@rdkcentral.com>
+Date: Mon, 14 Aug 2023 15:23:51 +0100
+Subject: [PATCH] argument_type_error
+
+Change-Id: I895781ea393abf4e9aa201a35e4e4738f78c51a4
+---
+ source/TR-181/sbapi/wifi_webconfig.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/source/TR-181/sbapi/wifi_webconfig.c b/source/TR-181/sbapi/wifi_webconfig.c
+index 4d047016..b7c55224 100644
+--- a/source/TR-181/sbapi/wifi_webconfig.c
++++ b/source/TR-181/sbapi/wifi_webconfig.c
+@@ -2564,7 +2564,7 @@ int wifi_WebConfigSet(const void *buf, size_t len,uint8_t ssid)
+         else if (strncmp(map_ptr->key.via.str.ptr, "version", map_ptr->key.via.str.size) == 0) {
+             if (map_ptr->val.type == MSGPACK_OBJECT_POSITIVE_INTEGER) {
+                 ps->version = (uint64_t) map_ptr->val.via.u64;
+-                CcspTraceError(("Version type %d version %llu\n",map_ptr->val.type,ps->version));
++                CcspTraceError(("Version type %d version %lu\n",map_ptr->val.type,ps->version));
+             }
+         }
+         else if (strncmp(map_ptr->key.via.str.ptr, "transaction_id", map_ptr->key.via.str.size) == 0) {
+@@ -5573,7 +5573,7 @@ int wifi_radioBlobSet(void *data)
+         return RETURN_ERR;
+     }
+ 
+-    CcspTraceInfo(("%s:Msg unpack success. Offset is %u\n", __FUNCTION__,offset));
++    CcspTraceInfo(("%s:Msg unpack success. Offset is %lu\n", __FUNCTION__,offset));
+     msgpack_object obj = msg.data;
+ 
+     map = &msg.data.via.map;
+@@ -5604,7 +5604,7 @@ int wifi_radioBlobSet(void *data)
+         if (strncmp(map_ptr->key.via.str.ptr, "version", map_ptr->key.via.str.size) == 0) {
+             if (map_ptr->val.type == MSGPACK_OBJECT_POSITIVE_INTEGER) {
+                 radio_data->version = (uint64_t) map_ptr->val.via.u64;
+-                CcspTraceInfo(("Version type %d version %llu\n",map_ptr->val.type,radio_data->version));
++                CcspTraceInfo(("Version type %d version %lu\n",map_ptr->val.type,radio_data->version));
+             }
+         }
+         else if (strncmp(map_ptr->key.via.str.ptr, "transaction_id", map_ptr->key.via.str.size) == 0) {
+-- 
+2.37.2
+

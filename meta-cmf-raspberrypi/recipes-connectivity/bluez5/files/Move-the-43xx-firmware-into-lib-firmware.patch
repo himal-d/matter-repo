@@ -1,0 +1,12 @@
+diff -aNurdw --binary '--exclude=.git*' '--exclude=.DEPS.git' a/tools/hciattach.h b/tools/hciattach.h
+--- a/tools/hciattach.h	2023-09-13 12:13:05.808256974 +0100
++++ b/tools/hciattach.h	2023-09-13 12:14:20.012900408 +0100
+@@ -41,7 +41,7 @@
+ #define HCI_UART_VND_DETECT	5
+ 
+ #ifndef FIRMWARE_DIR
+-#define FIRMWARE_DIR "/etc/firmware"
++#define FIRMWARE_DIR "/lib/firmware"
+ #endif
+ 
+ int read_hci_event(int fd, unsigned char *buf, int size);

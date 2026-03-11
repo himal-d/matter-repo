@@ -1,0 +1,37 @@
+/*This is a temporary fix for solving the issue of containerization with Access control.
+
+We have the provision to use an LSM profile in container and it used to work fine till kernel 4.9.
+After 4.9, no-new-privilages (NNP) were introduced in kernel.
+This meant that once a task is under no new privs, it is not allowed change its profile and
+potentially increase its privileges. no_new_privs prevents Linux Security Modules (LSMs) from
+transitioning to process labels that have access not allowed to the current process.
+A process is only allowed to transition to a process type with less privileges.
+
+This caused us issue when we use a default global profile for all processes and tried to launch a
+container with its own specific profile configured.
+Inorder to solve this, potential solutions were to inherit current profile or Profile stacking.
+Since they didnt work, we are temporarily commenting the check for NNP here, and will uncomment
+this when we get the proper fix.
+*/
+
+Index: kernel-source/security/apparmor/domain.c
+===================================================================
+--- kernel-source.orig/security/apparmor/domain.c
++++ kernel-source/security/apparmor/domain.c
+@@ -913,13 +913,13 @@ int apparmor_bprm_creds_for_exec(struct
+ 	 * subsets are allowed even when no_new_privs is set because this
+ 	 * aways results in a further reduction of permissions.
+ 	 */
+-	if ((bprm->unsafe & LSM_UNSAFE_NO_NEW_PRIVS) &&
++	/*if ((bprm->unsafe & LSM_UNSAFE_NO_NEW_PRIVS) &&
+ 	    !unconfined(label) &&
+ 	    !aa_label_is_unconfined_subset(new, ctx->nnp)) {
+ 		error = -EPERM;
+ 		info = "no new privs";
+ 		goto audit;
+-	}
++	}*/
+ 
+ 	if (bprm->unsafe & LSM_UNSAFE_SHARE) {
+ 		/* FIXME: currently don't mediate shared state */
+
