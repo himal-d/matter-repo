@@ -1,0 +1,18 @@
+Index: git/tests/gtest/CMakeLists.txt
+===================================================================
+--- git.orig/tests/gtest/CMakeLists.txt	2025-08-06 12:19:52.850448043 +0530
++++ git/tests/gtest/CMakeLists.txt	2025-08-06 12:21:49.842845439 +0530
+@@ -25,6 +25,7 @@
+ #  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ #  POSSIBILITY OF SUCH DAMAGE.
+ #
++if(OTBR_ENABLE_TESTS)
+ 
+ cmake_minimum_required(VERSION 3.14)
+ project(openthread-br-gtest)
+@@ -129,3 +130,5 @@
+     )
+     gtest_discover_tests(otbr-gtest-telemetry)
+ endif()
++
++endif()

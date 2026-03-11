@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenThread Daemon (ot-daemon) - Thread RCP bridge
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'RCP_DEV=${RCP_DEVICE:-/dev/ttyACM0}; [ -e "$RCP_DEV" ] || exit 1'
+ExecStart=/usr/sbin/ot-daemon -v 'spinel+hdlc+uart://${RCP_DEVICE:-/dev/ttyACM0}?baudrate=115200' -I wpan0
+Environment=RCP_DEVICE=/dev/ttyACM0
+
+[Install]
+WantedBy=multi-user.target
+

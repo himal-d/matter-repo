@@ -1,0 +1,13 @@
+Index: git/src/posix/platform/openthread-core-posix-config.h
+===================================================================
+--- git.orig/src/posix/platform/openthread-core-posix-config.h
++++ git/src/posix/platform/openthread-core-posix-config.h
+@@ -34,6 +34,8 @@
+ #ifndef OPENTHREAD_CORE_POSIX_CONFIG_H_
+ #define OPENTHREAD_CORE_POSIX_CONFIG_H_
+ 
++#define OPENTHREAD_CONFIG_UPTIME_ENABLE 1
++
+ #include <openthread/platform/logging.h>
+ 
+ #include "openthread-posix-daemon-config.h"

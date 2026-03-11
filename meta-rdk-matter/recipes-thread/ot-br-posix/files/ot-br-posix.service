@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenThread Border Router
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/sbin/modprobe mac802154 ieee802154 tun
+ExecStart=/usr/local/bin/otbr-agent-wrapper.sh
+Restart=always
+RestartSec=3
+KillMode=process
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,654 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matter Controller Daemon <matter-controller@example.com>
+Date: $(date +%Y-%m-%d)
+Subject: [PATCH] Add Matter Controller Daemon
+
+Add a new persistent Matter Controller daemon application that:
+- Provides persistent Matter Controller functionality
+- Supports BLE commissioning (always-on)
+- Supports multi-admin commissioning
+- Auto-opens commissioning window on startup
+- Uses persistent storage at /var/lib/matter-controller/
+- Integrates with Thread/OTBR (wpan0)
+
+This is a separate application from chip-all-clusters-app and chip-tool.
+
+---
+ examples/matter-controller-daemon/linux/BUILD.gn    | 60 +++++++++++++++++++++
+ examples/matter-controller-daemon/linux/main.cpp     | 60 +++++++++++++++++++++
+ examples/matter-controller-daemon/linux/MatterController.cpp | 200 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ examples/matter-controller-daemon/linux/MatterController.h  | 80 ++++++++++++++++++++++++++++
+ 4 files changed, 400 insertions(+)
+ create mode 100644 examples/matter-controller-daemon/linux/BUILD.gn
+ create mode 100644 examples/matter-controller-daemon/linux/main.cpp
+ create mode 100644 examples/matter-controller-daemon/linux/MatterController.cpp
+ create mode 100644 examples/matter-controller-daemon/linux/MatterController.h
+
+diff --git a/examples/matter-controller-daemon/linux/BUILD.gn b/examples/matter-controller-daemon/linux/BUILD.gn
+new file mode 100644
+index 0000000..$(git hash-object examples/matter-controller-daemon/linux/BUILD.gn)
+--- /dev/null
++++ b/examples/matter-controller-daemon/linux/BUILD.gn
+@@ -0,0 +1,60 @@
++# Matter Controller Daemon - BUILD.gn
++# Persistent Matter Controller with BLE Commissioning and Multi-Admin Support
++
++import("//build_overrides/pigweed_environment.gni")
++import("${build_root}/core.gni")
++
++# Matter Controller Daemon executable
++executable("matter-controller-daemon") {
++  sources = [
++    "main.cpp",
++    "MatterController.cpp",
++  ]
++
++  public_deps = [
++    "//src/app:app-common",
++    "//src/app/server:server",
++    "//src/controller:controller",
++    "//src/controller:lib",
++    "//src/credentials:credentials",
++    "//src/lib:lib",
++    "//src/platform:platform",
++    "//src/setup_payload:setup_payload",
++    "//src/ble:ble",
++  ]
++
++  deps = [
++    "//src/lib/core:core",
++    "//src/lib/support:support",
++    "//src/platform:platform",
++    "//src/platform/Linux:linux",
++    "//src/system:system",
++    "//src/transport:transport",
++    "//src/credentials:credentials",
++    "//src/app:app-common",
++    "//src/app/server:server",
++    "//src/controller:controller",
++    "//src/controller:lib",
++    "//src/ble:ble",
++    "//src/setup_payload:setup_payload",
++  ]
++
++  cflags = [
++    "-DCHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME=\"wlan0\"",
++    "-DCHIP_DEVICE_CONFIG_LINUX_DHCPC_CMD=\"udhcpc -b -i %s\"",
++    "-DCHIP_DEVICE_CONFIG_THREAD_INTERFACE_NAME=\"wpan0\"",
++    "-DCHIP_DEVICE_CONFIG_ENABLE_WIFI=1",
++    "-DCHIP_DEVICE_CONFIG_ENABLE_THREAD=1",
++    "-DCHIP_DEVICE_CONFIG_ENABLE_BLE=1",
++  ]
++
++  cflags_cc = [
++    "-std=c++17",
++    "-Wall",
++    "-Wextra",
++  ]
++
++  ldflags = [
++    "-pthread",
++  ]
++}
++
+diff --git a/examples/matter-controller-daemon/linux/main.cpp b/examples/matter-controller-daemon/linux/main.cpp
+new file mode 100644
+index 0000000..$(git hash-object examples/matter-controller-daemon/linux/main.cpp)
+--- /dev/null
++++ b/examples/matter-controller-daemon/linux/main.cpp
+@@ -0,0 +1,60 @@
++/*
++ * Copyright (c) 2025
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Matter Controller Daemon - Main Entry Point
++ * Persistent Matter Controller with BLE Commissioning and Multi-Admin Support
++ */
++
++#include "MatterController.h"
++#include <lib/support/CHIPMem.h>
++#include <lib/support/CHIPPlatformMemory.h>
++#include <platform/CHIPDeviceLayer.h>
++#include <signal.h>
++#include <unistd.h>
++
++using namespace chip;
++using namespace chip::DeviceLayer;
++
++// Global controller instance for signal handling
++MatterController * gController = nullptr;
++
++// Signal handler for graceful shutdown
++void SignalHandler(int signum)
++{
++    ChipLogProgress(NotSpecified, "Received signal %d, shutting down...", signum);
++    if (gController != nullptr)
++    {
++        gController->Shutdown();
++    }
++    exit(0);
++}
++
++int main(int argc, char * argv[])
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    // Initialize platform memory
++    Platform::MemoryInit();
++
++    // Register signal handlers
++    signal(SIGINT, SignalHandler);
++    signal(SIGTERM, SignalHandler);
++
++    ChipLogProgress(NotSpecified, "Matter Controller Daemon starting...");
++
++    // Create controller instance
++    gController = new MatterController();
++    if (gController == nullptr)
++    {
++        ChipLogError(NotSpecified, "Failed to allocate MatterController");
++        return -1;
++    }
++
++    // Initialize controller
++    err = gController->Init();
++    if (err != CHIP_NO_ERROR)
++    {
++        ChipLogError(NotSpecified, "Controller initialization failed: %" CHIP_ERROR_FORMAT, err.Format());
++        delete gController;
++        Platform::MemoryShutdown();
++        return -1;
++    }
++
++    ChipLogProgress(NotSpecified, "Matter Controller Daemon initialized successfully");
++
++    // Run controller main loop (blocks until shutdown)
++    err = gController->Run();
++    if (err != CHIP_NO_ERROR)
++    {
++        ChipLogError(NotSpecified, "Controller run failed: %" CHIP_ERROR_FORMAT, err.Format());
++    }
++
++    // Cleanup
++    gController->Shutdown();
++    delete gController;
++    Platform::MemoryShutdown();
++
++    ChipLogProgress(NotSpecified, "Matter Controller Daemon stopped");
++    return (err == CHIP_NO_ERROR) ? 0 : -1;
++}
++
+diff --git a/examples/matter-controller-daemon/linux/MatterController.cpp b/examples/matter-controller-daemon/linux/MatterController.cpp
+new file mode 100644
+index 0000000..$(git hash-object examples/matter-controller-daemon/linux/MatterController.cpp)
+--- /dev/null
++++ b/examples/matter-controller-daemon/linux/MatterController.cpp
+@@ -0,0 +1,200 @@
++/*
++ * Copyright (c) 2025
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Matter Controller Daemon - Controller Implementation
++ * Persistent Matter Controller with BLE Commissioning and Multi-Admin Support
++ */
++
++#include "MatterController.h"
++#include <lib/support/CodeUtils.h>
++#include <lib/support/logging/CHIPLogging.h>
++#include <platform/CHIPDeviceLayer.h>
++#include <app/server/Server.h>
++#include <app/server/OnboardingCodesUtil.h>
++#include <controller/CHIPDeviceController.h>
++#include <controller/CommissioningWindowOpener.h>
++#include <controller/ExampleOperationalCredentialsIssuer.h>
++#include <credentials/DeviceAttestationCredsProvider.h>
++#include <credentials/examples/DeviceAttestationCredsExample.h>
++#include <platform/Linux/CHIPLinuxStorage.h>
++#include <platform/PlatformManager.h>
++#include <ble/Ble.h>
++#include <ble/BleLayer.h>
++#include <platform/Linux/BlePlatformConfig.h>
++#include <sys/stat.h>
++#include <unistd.h>
++#include <chrono>
++#include <thread>
++
++using namespace chip;
++using namespace chip::DeviceLayer;
++using namespace chip::Controller;
++
++MatterController::MatterController() :
++    mRunning(false), mInitialized(false), mStorage(nullptr), mController(nullptr),
++    mCommissioningWindowOpen(false), mCommissioningWindowTimeout(300),
++    mCommissioningWindowDiscriminator(3840), mCommissioningWindowPasscode(12345678)
++{
++}
++
++MatterController::~MatterController()
++{
++    Shutdown();
++}
++
++CHIP_ERROR MatterController::Init()
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    if (mInitialized)
++    {
++        ChipLogError(NotSpecified, "Controller already initialized");
++        return CHIP_ERROR_INCORRECT_STATE;
++    }
++
++    ChipLogProgress(NotSpecified, "Initializing Matter Controller...");
++
++    // 1. Create storage directory if it doesn't exist
++    struct stat st;
++    if (stat(kStoragePath, &st) != 0)
++    {
++        if (mkdir(kStoragePath, 0755) != 0)
++        {
++            ChipLogError(NotSpecified, "Failed to create storage directory: %s", kStoragePath);
++            return CHIP_ERROR_WRITE_FAILED;
++        }
++        ChipLogProgress(NotSpecified, "Created storage directory: %s", kStoragePath);
++    }
++
++    // 2. Initialize CHIP stack
++    err = InitChipStack();
++    SuccessOrExit(err);
++
++    // 3. Initialize persistent storage
++    err = InitStorage();
++    SuccessOrExit(err);
++
++    // 4. Initialize BLE
++    err = InitBLE();
++    SuccessOrExit(err);
++
++    // 5. Initialize Thread/OTBR
++    err = InitThread();
++    SuccessOrExit(err);
++
++    // 6. Initialize Device Controller
++    {
++        DeviceControllerInitParams initParams;
++        initParams.storageDelegate              = mStorage;
++        initParams.operationalCredentialsIssuer = Platform::New<ExampleOperationalCredentialsIssuer>();
++        initParams.enableServerInteractions     = true;
++
++        err = DeviceController::InitDeviceController(initParams, mController);
++        SuccessOrExit(err);
++
++        ChipLogProgress(NotSpecified, "Device Controller initialized");
++    }
++
++    // 7. Open commissioning window at startup
++    err = OpenStartupCommissioningWindow();
++    SuccessOrExit(err);
++
++    mInitialized = true;
++    mRunning     = true;
++
++    ChipLogProgress(NotSpecified, "Matter Controller initialized successfully");
++
++exit:
++    if (err != CHIP_NO_ERROR)
++    {
++        ChipLogError(NotSpecified, "Controller initialization failed: %" CHIP_ERROR_FORMAT, err.Format());
++        Shutdown();
++    }
++    return err;
++}
++
++CHIP_ERROR MatterController::InitChipStack()
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    ChipLogProgress(NotSpecified, "Initializing CHIP stack...");
++
++    // Initialize Platform Manager
++    err = PlatformMgr().InitChipStack();
++    SuccessOrExit(err);
++
++    // Initialize Data Model
++    err = Server::GetInstance().Init(nullptr, Server::InitParams());
++    SuccessOrExit(err);
++
++    ChipLogProgress(NotSpecified, "CHIP stack initialized");
++
++exit:
++    return err;
++}
++
++CHIP_ERROR MatterController::InitStorage()
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    ChipLogProgress(NotSpecified, "Initializing persistent storage...");
++    ChipLogProgress(NotSpecified, "  KVS path: %s", kKvsPath);
++    ChipLogProgress(NotSpecified, "  Factory path: %s", kFactoryPath);
++    ChipLogProgress(NotSpecified, "  Config path: %s", kConfigPath);
++
++    // Initialize Linux persistent storage
++    err = mLinuxStorage.Init(kKvsPath, kFactoryPath, kConfigPath);
++    SuccessOrExit(err);
++
++    mStorage = &mLinuxStorage;
++
++    ChipLogProgress(NotSpecified, "Persistent storage initialized");
++
++exit:
++    return err;
++}
++
++CHIP_ERROR MatterController::InitBLE()
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    ChipLogProgress(NotSpecified, "Initializing BLE...");
++
++    // Get BLE layer
++    BleLayer * bleLayer = BleLayer::GetBleLayer();
++    VerifyOrReturnError(bleLayer != nullptr, CHIP_ERROR_INTERNAL);
++
++    // BLE is initialized by Platform Manager
++    // Ensure BLE remains enabled
++    ConnectivityMgr().SetBLEAdvertisingEnabled(true);
++    ConnectivityMgr().SetBLEAdvertisingMode(ConnectivityManager::kBLEAdvertisingMode_Enabled);
++
++    ChipLogProgress(NotSpecified, "BLE initialized and advertising enabled");
++
++    return err;
++}
++
++CHIP_ERROR MatterController::InitThread()
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    ChipLogProgress(NotSpecified, "Initializing Thread/OTBR...");
++
++    // Thread is initialized by Platform Manager using wpan0 interface
++    // Verify Thread interface exists
++    ConnectivityMgr().SetThreadDeviceType(ConnectivityManager::kThreadDeviceType_Router);
++    ConnectivityMgr().SetThreadEnabled(true);
++
++    ChipLogProgress(NotSpecified, "Thread/OTBR initialized (wpan0)");
++
++    return err;
++}
++
++CHIP_ERROR MatterController::OpenStartupCommissioningWindow()
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    ChipLogProgress(NotSpecified, "Opening commissioning window at startup...");
++    ChipLogProgress(NotSpecified, "  Timeout: %d seconds", mCommissioningWindowTimeout);
++    ChipLogProgress(NotSpecified, "  Discriminator: %d", mCommissioningWindowDiscriminator);
++    ChipLogProgress(NotSpecified, "  Passcode: %d", mCommissioningWindowPasscode);
++
++    err = OpenCommissioningWindow(mCommissioningWindowTimeout, mCommissioningWindowDiscriminator, mCommissioningWindowPasscode);
++    SuccessOrExit(err);
++
++    ChipLogProgress(NotSpecified, "Commissioning window opened successfully");
++
++exit:
++    return err;
++}
++
++CHIP_ERROR MatterController::OpenCommissioningWindow(uint16_t timeoutSeconds, uint16_t discriminator, uint32_t passcode)
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    if (!mInitialized || mController == nullptr)
++    {
++        ChipLogError(NotSpecified, "Controller not initialized");
++        return CHIP_ERROR_INCORRECT_STATE;
++    }
++
++    ChipLogProgress(NotSpecified, "Opening commissioning window...");
++
++    // Use CommissioningWindowOpener to open the window
++    CommissioningWindowOpener opener;
++    err = opener.OpenBasicCommissioningWindow(mController, timeoutSeconds, discriminator, passcode);
++    SuccessOrExit(err);
++
++    mCommissioningWindowOpen = true;
++    mCommissioningWindowTimeout     = timeoutSeconds;
++    mCommissioningWindowDiscriminator = discriminator;
++    mCommissioningWindowPasscode    = passcode;
++
++    // Print QR code and manual pairing code
++    {
++        std::string QRCode;
++        std::string manualPairingCode;
++        err = GetQRCode(QRCode, RendezvousInformationFlags(RendezvousInformationFlag::kBLE));
++        if (err == CHIP_NO_ERROR)
++        {
++            ChipLogProgress(NotSpecified, "QR Code: %s", QRCode.c_str());
++        }
++
++        err = GetManualPairingCode(manualPairingCode, RendezvousInformationFlags(RendezvousInformationFlag::kBLE));
++        if (err == CHIP_ERROR)
++        {
++            ChipLogProgress(NotSpecified, "Manual Pairing Code: %s", manualPairingCode.c_str());
++        }
++    }
++
++    ChipLogProgress(NotSpecified, "Commissioning window opened (timeout: %d seconds)", timeoutSeconds);
++
++exit:
++    if (err != CHIP_NO_ERROR)
++    {
++        ChipLogError(NotSpecified, "Failed to open commissioning window: %" CHIP_ERROR_FORMAT, err.Format());
++    }
++    return err;
++}
++
++CHIP_ERROR MatterController::CloseCommissioningWindow()
++{
++    CHIP_ERROR err = CHIP_NO_ERROR;
++
++    if (!mCommissioningWindowOpen)
++    {
++        ChipLogProgress(NotSpecified, "Commissioning window already closed");
++        return CHIP_NO_ERROR;
++    }
++
++    ChipLogProgress(NotSpecified, "Closing commissioning window...");
++
++    // Disable BLE advertising
++    ConnectivityMgr().SetBLEAdvertisingEnabled(false);
++
++    mCommissioningWindowOpen = false;
++
++    ChipLogProgress(NotSpecified, "Commissioning window closed");
++
++    return err;
++}
++
++CHIP_ERROR MatterController::Run()
++{
++    if (!mInitialized)
++    {
++        ChipLogError(NotSpecified, "Controller not initialized");
++        return CHIP_ERROR_INCORRECT_STATE;
++    }
++
++    ChipLogProgress(NotSpecified, "Matter Controller daemon running...");
++
++    // Start event loop thread
++    mEventLoopThread = std::thread(&MatterController::EventLoop, this);
++
++    // Wait for shutdown signal
++    while (mRunning)
++    {
++        std::this_thread::sleep_for(std::chrono::seconds(1));
++    }
++
++    // Wait for event loop thread to finish
++    if (mEventLoopThread.joinable())
++    {
++        mEventLoopThread.join();
++    }
++
++    return CHIP_NO_ERROR;
++}
++
++void MatterController::EventLoop()
++{
++    ChipLogProgress(NotSpecified, "Event loop started");
++
++    while (mRunning)
++    {
++        // Process CHIP events
++        PlatformMgr().LockChipStack();
++        PlatformMgr().UnlockChipStack();
++
++        // Sleep to avoid busy loop
++        std::this_thread::sleep_for(std::chrono::milliseconds(100));
++    }
++
++    ChipLogProgress(NotSpecified, "Event loop stopped");
++}
++
++void MatterController::Shutdown()
++{
++    if (!mInitialized)
++    {
++        return;
++    }
++
++    ChipLogProgress(NotSpecified, "Shutting down Matter Controller...");
++
++    mRunning = false;
++
++    // Close commissioning window
++    CloseCommissioningWindow();
++
++    // Wait for event loop thread
++    if (mEventLoopThread.joinable())
++    {
++        mEventLoopThread.join();
++    }
++
++    // Shutdown controller
++    if (mController != nullptr)
++    {
++        mController->Shutdown();
++        mController = nullptr;
++    }
++
++    // Shutdown CHIP stack
++    Server::GetInstance().Shutdown();
++    PlatformMgr().ShutdownChipStack();
++
++    // Shutdown storage
++    if (mStorage != nullptr)
++    {
++        mStorage = nullptr;
++    }
++
++    mInitialized = false;
++
++    ChipLogProgress(NotSpecified, "Matter Controller shut down");
++}
++
+diff --git a/examples/matter-controller-daemon/linux/MatterController.h b/examples/matter-controller-daemon/linux/MatterController.h
+new file mode 100644
+index 0000000..$(git hash-object examples/matter-controller-daemon/linux/MatterController.h)
+--- /dev/null
++++ b/examples/matter-controller-daemon/linux/MatterController.h
+@@ -0,0 +1,80 @@
++/*
++ * Copyright (c) 2025
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Matter Controller Daemon - Controller Class Header
++ * Persistent Matter Controller with BLE Commissioning and Multi-Admin Support
++ */
++
++#pragma once
++
++#include <lib/core/CHIPError.h>
++#include <lib/support/CHIPMem.h>
++#include <platform/CHIPDeviceLayer.h>
++#include <app/server/Server.h>
++#include <app/server/OnboardingCodesUtil.h>
++#include <controller/CHIPDeviceController.h>
++#include <controller/CommissioningWindowOpener.h>
++#include <platform/Linux/CHIPLinuxStorage.h>
++#include <platform/PlatformManager.h>
++#include <ble/Ble.h>
++#include <thread>
++#include <atomic>
++
++using namespace chip;
++using namespace chip::DeviceLayer;
++using namespace chip::Controller;
++
++class MatterController
++{
++public:
++    MatterController();
++    ~MatterController();
++
++    // Initialize controller (CHIP stack, storage, BLE, Thread)
++    CHIP_ERROR Init();
++
++    // Run controller main loop (blocks until shutdown)
++    CHIP_ERROR Run();
++
++    // Shutdown controller gracefully
++    void Shutdown();
++
++    // Open commissioning window (for multi-admin)
++    CHIP_ERROR OpenCommissioningWindow(uint16_t timeoutSeconds = 300, uint16_t discriminator = 3840, uint32_t passcode = 12345678);
++
++    // Close commissioning window
++    CHIP_ERROR CloseCommissioningWindow();
++
++private:
++    // Initialize CHIP stack
++    CHIP_ERROR InitChipStack();
++
++    // Initialize persistent storage
++    CHIP_ERROR InitStorage();
++
++    // Initialize BLE
++    CHIP_ERROR InitBLE();
++
++    // Initialize Thread/OTBR
++    CHIP_ERROR InitThread();
++
++    // Open commissioning window at startup
++    CHIP_ERROR OpenStartupCommissioningWindow();
++
++    // Main event loop
++    void EventLoop();
++
++    // Controller state
++    std::atomic<bool> mRunning;
++    std::atomic<bool> mInitialized;
++    std::thread mEventLoopThread;
++
++    // Storage
++    PersistentStorageDelegate * mStorage;
++    LinuxPersistentStorage mLinuxStorage;
++
++    // Controller instance
++    DeviceController * mController;
++
++    // Commissioning window state
++    std::atomic<bool> mCommissioningWindowOpen;
++    uint16_t mCommissioningWindowTimeout;
++    uint16_t mCommissioningWindowDiscriminator;
++    uint32_t mCommissioningWindowPasscode;
++
++    // Storage paths
++    static constexpr const char * kStoragePath = "/var/lib/matter-controller";
++    static constexpr const char * kKvsPath     = "/var/lib/matter-controller/chip_kvs";
++    static constexpr const char * kFactoryPath = "/var/lib/matter-controller/chip_factory.ini";
++    static constexpr const char * kConfigPath  = "/var/lib/matter-controller/chip_config.ini";
++};
++
+

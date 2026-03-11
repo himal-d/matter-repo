@@ -1,0 +1,77 @@
+From b05bb07ef35613ce9128bd89c8cd371ac3281cf4 Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Thu, 1 Jan 2026 17:43:49 +0530
+Subject: [PATCH] BLE: Add Rediscover Device when the object becomes invalid
+
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 40 ++++++++++++++--------
+ 1 file changed, 26 insertions(+), 14 deletions(-)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 5c8c46f5d0..58ce2f64c1 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -798,22 +798,31 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         
+         // Check for error 36 (le-connection-abort-by-local) using proper error matching
+         // Error 36 comes as org.bluez.Error.Failed with message "le-connection-abort-by-local (36)" 
++        // BlueZ D-Bus errors have domain g_dbus_error_quark() 
+         bool isError36 = false;
+-        if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_DBUS_ERROR))		
++        if (error->domain == g_dbus_error_quark())		
+         {
+-            // Verify it's a D-Bus error
+-            if (error->domain == g_dbus_error_quark())
++            // Error 36 is uniquely identified by the error code "(36)" in the message
++            // This is the most reliable way to detect it across BlueZ versions
++            if (error->message != nullptr)		    
+             {
+-                // Error 36 is uniquely identified by the error code "(36)" in the message
+-                // This is the most reliable way to detect it across BlueZ versions
+-                if (error->message != nullptr)
++                const char * msg = error->message;
++                // Check for the error code pattern: "(36)" - this is BlueZ's way of reporting HCI error 36
++                if (strstr(msg, "(36)") != nullptr)			
+                 {
+-                    const char * msg = error->message;
+-                    // Check for the error code pattern: "(36)" - this is BlueZ's way of reporting HCI error 36
+-                    if (strstr(msg, "(36)") != nullptr)
+-                    {
+-                        isError36 = true;
+-                    }
++                    isError36 = true;
++                }
++            }
++        }
++        // Also check G_IO_ERROR_DBUS_ERROR for compatibility
++        else if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_DBUS_ERROR))
++        {
++            if (error->message != nullptr)
++            {
++                const char * msg = error->message;
++                if (strstr(msg, "(36)") != nullptr)
++                {
++                    isError36 = true;			
+                 }
+             }	    
+         }
+@@ -821,11 +830,14 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         if (isError36)
+         {
+             error36Count++;
++            ChipLogDetail(DeviceLayer, "Error 36 detected (count: %u, retry: %u)", error36Count, i + 1);	    
+         }
+ 
+         // Handle device invalidation: rediscover device
+-        // Trigger rediscovery on UnknownObject or after persistent error 36 
+-        if (isUnknownObject || (isError36 && error36Count >= kError36RediscoveryThreshold && i >= kError36RediscoveryThreshold))
++        // Trigger rediscovery on UnknownObject or after persistent error 36 (2+ occurrences)
++        // Note: i is 0-indexed, so i >= 1 means we're on retry 2 or later (after 2 error 36s)
++        bool shouldRediscover = (isUnknownObject || (isError36 && error36Count >= kError36RediscoveryThreshold && i >= (kError36RediscoveryThreshold - 1)));
++        if (shouldRediscover) 
+         {
+             ChipLogError(DeviceLayer, "Device object invalidated or persistent error 36 (count: %u) - attempting rediscovery", error36Count);
+             
+-- 
+2.50.1
+

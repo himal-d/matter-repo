@@ -1,0 +1,58 @@
+[Unit]
+Description=Matter Controller Daemon - Persistent Controller with BLE Commissioning
+Documentation=https://github.com/project-chip/connectedhomeip
+After=network-online.target avahi-daemon.service dbus.service ot-br-posix.service bluetooth.service
+Wants=network-online.target
+Requires=avahi-daemon.service bluetooth.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Create storage directory before starting
+ExecStartPre=/bin/mkdir -p /var/lib/matter-controller
+ExecStartPre=/bin/chown root:root /var/lib/matter-controller
+ExecStartPre=/bin/chmod 755 /var/lib/matter-controller
+
+# Wait for BlueZ to be fully ready (Pi 4 workaround)
+ExecStartPre=/bin/bash -c 'while ! bluetoothctl show 2>/dev/null | grep -q "Powered: yes"; do sleep 0.5; done'
+ExecStartPre=/bin/sleep 2
+
+# Wait for Thread interface
+ExecStartPre=/bin/sh -c 'while ! ip link show wpan0 >/dev/null 2>&1; do sleep 1; done'
+
+# Main executable - Matter Controller Daemon
+ExecStart=/usr/bin/matter-controller-daemon
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Environment variables
+Environment="CHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME=wlan0"
+Environment="CHIP_DEVICE_CONFIG_LINUX_DHCPC_CMD=udhcpc -b -i %s"
+Environment="CHIP_DEVICE_CONFIG_THREAD_INTERFACE_NAME=wpan0"
+Environment="CHIP_STORAGE_DIR=/var/lib/matter-controller"
+Environment="CHIP_KVS_PATH=/var/lib/matter-controller/chip_kvs"
+Environment="CHIP_FACTORY_CONFIG_PATH=/var/lib/matter-controller/chip_factory.ini"
+Environment="CHIP_CONFIG_PATH=/var/lib/matter-controller/chip_config.ini"
+
+# Security and resource limits
+NoNewPrivileges=false
+PrivateTmp=yes
+LimitNOFILE=65536
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=matter-controller-daemon
+
+# PID file
+PIDFile=/run/matter-controller-daemon.pid
+
+[Install]
+WantedBy=multi-user.target
+

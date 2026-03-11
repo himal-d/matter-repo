@@ -1,0 +1,25 @@
+From a91c6e7100ea74f4f18275e7818253d9d57dc5f4 Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Wed, 14 Jan 2026 17:35:01 +0530
+Subject: [PATCH] Add matter controller daemon to examples BUILD.gn
+
+---
+ examples/BUILD.gn | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/examples/BUILD.gn b/examples/BUILD.gn
+index a8cb184229..a8d7d6f79d 100644
+--- a/examples/BUILD.gn
++++ b/examples/BUILD.gn
+@@ -25,6 +25,8 @@ if (chip_build_tests) {
+   chip_test_group("example_tests") {
+     deps = []
+     tests = []
++    # Reference matter-controller-daemon to ensure GN discovers it
++    deps += [ "${chip_root}/examples/matter-controller-daemon:matter-controller-daemon" ]
+     if (chip_device_platform == "linux" && current_os == "linux") {
+       tests += [ "${chip_root}/examples/energy-management-app/energy-management-common/tests" ]
+     }
+-- 
+2.50.1
+

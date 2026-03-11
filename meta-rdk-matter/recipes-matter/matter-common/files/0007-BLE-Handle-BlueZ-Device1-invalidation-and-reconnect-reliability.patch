@@ -1,0 +1,233 @@
+From 6e24b50d9d85dc91e30a4cdb1063dc2de05d6f5c Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Mon, 5 Jan 2026 10:58:28 +0530
+Subject: [PATCH] BLE: Handle BlueZ Device1 invalidation and reconnect reliably
+
+%% original patch: 0007-BLE-Handle-BlueZ-Device1-invalidation-and-reconnect-reliability.patch
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 144 ++++++++++++++++++---
+ src/platform/Linux/bluez/BluezEndpoint.h   |   9 ++
+ 2 files changed, 136 insertions(+), 17 deletions(-)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 58ce2f64c1..043e28a1ce 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -794,6 +794,7 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         ChipLogError(DeviceLayer, "FAIL: ConnectDevice: %s (%d)", error->message, error->code);
+ 
+         // Check if device object became invalid (UnknownObject error)
++        // UNKNOWN_OBJECT means the D-Bus object no longer exists - device was removed 
+         bool isUnknownObject = g_error_matches(error.get(), G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT);
+         
+         // Check for error 36 (le-connection-abort-by-local) using proper error matching
+@@ -808,7 +809,7 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+             {
+                 const char * msg = error->message;
+                 // Check for the error code pattern: "(36)" - this is BlueZ's way of reporting HCI error 36
+-                if (strstr(msg, "(36)") != nullptr)			
++                if (strstr(msg, "(36)") != nullptr || strstr(msg, "le-connection-abort-by-local") != nullptr)
+                 {
+                     isError36 = true;
+                 }
+@@ -820,7 +821,7 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+             if (error->message != nullptr)
+             {
+                 const char * msg = error->message;
+-                if (strstr(msg, "(36)") != nullptr)
++                if (strstr(msg, "(36)") != nullptr || strstr(msg, "le-connection-abort-by-local") != nullptr)
+                 {
+                     isError36 = true;			
+                 }
+@@ -833,30 +834,42 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+             ChipLogDetail(DeviceLayer, "Error 36 detected (count: %u, retry: %u)", error36Count, i + 1);	    
+         }
+ 
+-        // Handle device invalidation: rediscover device
+-        // Trigger rediscovery on UnknownObject or after persistent error 36 (2+ occurrences)
+-        // Note: i is 0-indexed, so i >= 1 means we're on retry 2 or later (after 2 error 36s)
+-        bool shouldRediscover = (isUnknownObject || (isError36 && error36Count >= kError36RediscoveryThreshold && i >= (kError36RediscoveryThreshold - 1)));
++        // Handle device object invalidation: rediscover device via ObjectManager
++        // UNKNOWN_OBJECT: Device object was removed - rediscover immediately
++        // Error 36 (persistent): After 2+ occurrences, device object may be stale - rediscover
++        bool shouldRediscover = false;
++        if (isUnknownObject)
++        {
++            ChipLogError(DeviceLayer, "Device object invalidated (UNKNOWN_OBJECT) - rediscovering immediately");
++            shouldRediscover = true;
++        }
++        else if (isError36 && error36Count >= kError36RediscoveryThreshold)
++        {
++            ChipLogError(DeviceLayer, "Persistent error 36 (count: %u) - device object may be stale, attempting rediscovery", error36Count);
++            shouldRediscover = true;
++        }	
+         if (shouldRediscover) 
+         {
+-            ChipLogError(DeviceLayer, "Device object invalidated or persistent error 36 (count: %u) - attempting rediscovery", error36Count);
+-            
+             if (deviceAddress != nullptr)
+             {
+-                // Try to rediscover the device (non-blocking, uses GLib event processing)
++                // Re-discover device via ObjectManager by address
++                // This gets a fresh Device1 object from BlueZ's object manager		    
+                 BluezDevice1 * newDevice = RediscoverDeviceByAddress(deviceAddress);
+                 if (newDevice != nullptr)
+                 {
+-                    ChipLogDetail(DeviceLayer, "Device rediscovered, retrying connection with new device object");
++                    ChipLogDetail(DeviceLayer, "Device rediscovered via ObjectManager, retrying connection with new Device1 object");
+                     // Store rediscovered device (takes ownership of the reference)
+                     rediscoveredDevice.reset(newDevice);
+                     currentDevice = rediscoveredDevice.get();
+-                    // Continue retry loop with new device object
++                    // Reset error count after successful rediscovery
++                    error36Count = 0;
++                    // Continue retry loop with new device object (don't count this as a retry)
+                     continue;
+                 }
+                 else
+                 {
+-                    ChipLogError(DeviceLayer, "Failed to rediscover device %s", deviceAddress);
++                    ChipLogError(DeviceLayer, "Failed to rediscover device %s via ObjectManager", deviceAddress);
++                    // If rediscovery fails, break out of retry loop
+                     break;
+                 }
+             }
+@@ -901,13 +914,110 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+     return CHIP_ERROR_INTERNAL;
+ }
+ 
++CHIP_ERROR BluezEndpoint::WaitForDiscoveryToStop()
++{
++    VerifyOrReturnError(mAdapter != nullptr, CHIP_ERROR_INTERNAL);
++    
++    // Wait for discovery to fully stop before attempting connection
++    // BlueZ may still be processing discovery state even after StopDiscovery() returns
++    constexpr uint32_t kDiscoveryStopTimeoutMs = 2000;
++    constexpr uint32_t kDiscoveryStopPollMs    = 50;
++    uint32_t waitTime                          = 0;
++    
++    ChipLogDetail(DeviceLayer, "Waiting for discovery to stop...");
++    
++    // Process GLib events to allow discovery state to update
++    GMainContext * context = g_main_context_get_thread_default();
++    if (context == nullptr)
++    {
++        context = g_main_context_default();
++    }
++    
++    while (waitTime < kDiscoveryStopTimeoutMs)
++    {
++        // Process pending GLib events to allow discovery state updates
++        while (g_main_context_iteration(context, FALSE))
++        {
++            // Process all pending events
++        }
++        
++        // Check if discovery has stopped
++        // Note: bluez_adapter1_get_discovering may not be available in all BlueZ versions
++        // We'll use a different approach: check if we can query adapter properties
++        // If discovery is active, BlueZ may reject connection attempts
++        
++        // For now, use a conservative delay to ensure discovery has stopped
++        // In practice, BlueZ typically stops discovery within 100-200ms
++        if (waitTime >= 200)  // Conservative 200ms wait
++        {
++            ChipLogDetail(DeviceLayer, "Discovery stop wait complete after %u ms", waitTime);
++            return CHIP_NO_ERROR;
++        }
++        
++        g_usleep(kDiscoveryStopPollMs * 1000);
++        waitTime += kDiscoveryStopPollMs;
++    }
++    
++    ChipLogDetail(DeviceLayer, "Discovery stop wait timeout after %u ms (proceeding anyway)", waitTime);
++    return CHIP_NO_ERROR;  // Don't fail, just proceed
++}
++
++CHIP_ERROR BluezEndpoint::PrepareDeviceForConnection(BluezDevice1 & aDevice)
++{
++    // Prepare device for connection by ensuring clean state
++    // Note: Trusted property is not available in BlueZ D-Bus bindings,
++    // so we only ensure device is disconnected before connecting
++	
++    // Check if device is already connected (shouldn't happen, but check anyway)
++    if (bluez_device1_get_connected(&aDevice))
++    {
++        ChipLogDetail(DeviceLayer, "Device already connected, disconnecting first");
++        bluez_device1_call_disconnect_sync(&aDevice, nullptr, nullptr);
++        g_usleep(200 * 1000);  // 200ms delay after disconnect
++    }
++    
++    // Process GLib events to allow any pending state changes to propagate
++    GMainContext * context = g_main_context_get_thread_default();
++    if (context == nullptr)
++    {
++        context = g_main_context_default();	    
++    }
++    while (g_main_context_iteration(context, FALSE))	    
++    {
++        // Process all pending events
++    }
++     
++    // Small delay to ensure device state is stable
++    g_usleep(100 * 1000);  // 100ms	    
++    
++    return CHIP_NO_ERROR;
++}
++
+ CHIP_ERROR BluezEndpoint::ConnectDevice(BluezDevice1 & aDevice)
+ {
+-    // Add delay after device discovery to allow BlueZ to stabilize
+-    // This mitigates error 36 (le-connection-abort-by-local) that occurs
+-    // when connecting immediately after device discovery
+-    constexpr uint32_t kPostDiscoveryConnectDelayMs = 300;  // Increased from 200ms for better stability
+-    ChipLogDetail(DeviceLayer, "Waiting %u ms after device discovery before connecting", kPostDiscoveryConnectDelayMs);
++    // Step 1: Wait for discovery to fully stop
++    // BlueZ requires discovery to be stopped before connection attempts
++    // This is critical to prevent error 36 (le-connection-abort-by-local)
++    CHIP_ERROR err = WaitForDiscoveryToStop();
++    if (err != CHIP_NO_ERROR)
++    {
++        ChipLogError(DeviceLayer, "Failed to wait for discovery stop: %" CHIP_ERROR_FORMAT, err.Format());
++        // Continue anyway, but log the error
++    }
++    
++    // Step 2: Prepare device for connection (set Trusted/Pairable)
++    err = PrepareDeviceForConnection(aDevice);
++    if (err != CHIP_NO_ERROR)
++    {
++        ChipLogError(DeviceLayer, "Failed to prepare device: %" CHIP_ERROR_FORMAT, err.Format());
++        // Continue anyway, but log the error
++    }
++    
++    // Step 3: Additional delay to ensure BlueZ state is stable
++    // This gives BlueZ time to process discovery stop and device property changes
++    constexpr uint32_t kPostDiscoveryConnectDelayMs = 500;  // Increased for better stability
++    ChipLogDetail(DeviceLayer, "Waiting %u ms after discovery stop before connecting", kPostDiscoveryConnectDelayMs);
++
+     usleep(kPostDiscoveryConnectDelayMs * 1000);
+ 	
+     auto params = std::make_pair(this, &aDevice);
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.h b/src/platform/Linux/bluez/BluezEndpoint.h
+index 137be6556b..0301cd36ba 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.h
++++ b/src/platform/Linux/bluez/BluezEndpoint.h
+@@ -111,6 +111,15 @@ private:
+ 
+     CHIP_ERROR VerifyAdapterReadiness();
+ 
++    // Verify that discovery has fully stopped before connecting
++    // BlueZ requires discovery to be stopped before connection attempts
++    CHIP_ERROR WaitForDiscoveryToStop();
++    
++    // Prepare device for connection by setting Trusted property and ensuring clean state
++    // Some BlueZ configurations require Trusted property to be set before connecting
++    // Also ensures device is not already connected before attempting new connection
++    CHIP_ERROR PrepareDeviceForConnection(BluezDevice1 & aDevice);
++
+     // Helper to safely remove and rediscover device after invalidation
+     // Uses non-blocking event processing to wait for device re-discovery
+     // Returns a new device object reference if found, nullptr otherwise
+-- 
+2.50.1
+

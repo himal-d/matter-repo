@@ -1,0 +1,24 @@
+# OpenThread RCP (Radio Co-Processor) udev rules
+# Supports nRF52840, ESP32-H2, EFR32MG24
+# Production workaround for Raspberry Pi 4 - use external RCP for Thread
+
+# nRF52840 Dongle (Nordic) - Recommended
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1915", ATTRS{idProduct}=="521f", \
+    SYMLINK+="ot-rcp", MODE="0666", GROUP="dialout", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}="ot-br-posix.service"
+
+# ESP32-H2 DevKit (Espressif)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", \
+    KERNEL=="ttyACM*", SYMLINK+="ot-rcp", MODE="0666", GROUP="dialout", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}="ot-br-posix.service"
+
+# EFR32MG24 (Silicon Labs)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", \
+    KERNEL=="ttyUSB*", SYMLINK+="ot-rcp", MODE="0666", GROUP="dialout", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}="ot-br-posix.service"
+
+# Generic USB serial (fallback - use with caution)
+# Uncomment only if you know your RCP device vendor/product IDs
+# SUBSYSTEM=="tty", KERNEL=="ttyACM*", \
+#     SYMLINK+="ot-rcp", MODE="0666", GROUP="dialout"
+

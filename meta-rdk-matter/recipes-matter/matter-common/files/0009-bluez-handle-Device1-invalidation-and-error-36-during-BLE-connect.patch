@@ -1,0 +1,181 @@
+From 73eb598514f85fef64d5dceb6ae9cae486ee4a4c Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Tue, 6 Jan 2026 10:53:26 +0530
+Subject: [PATCH] bluez: handle Device1 invalidation and error 36 during BLE
+ connect
+
+%% original patch: 0009-bluez-handle-Device1-invalidation-and-error-36-during-BLE-connect.patch
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 129 ++++++++++++++++++---
+ 1 file changed, 113 insertions(+), 16 deletions(-)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 9567454354..78250415c3 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -788,6 +788,13 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+ 
+     for (uint16_t i = 0; i < kMaxConnectRetries; i++)
+     {
++        // Ensure we have a valid device object before attempting connection
++        if (currentDevice == nullptr)
++        {
++            ChipLogError(DeviceLayer, "Device object is null, cannot connect");
++            break;
++        }
++	    
+         GAutoPtr<GError> error;
+         if (bluez_device1_call_connect_sync(currentDevice, mConnectCancellable.get(), &error.GetReceiver()))		
+         {
+@@ -894,42 +901,132 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         {
+             ChipLogError(DeviceLayer, "Device object invalidated (UNKNOWN_OBJECT) - rediscovering immediately");
+             shouldRediscover = true;
++            // Immediately invalidate current device reference - it's no longer valid
++            currentDevice = nullptr;
+         }
+         else if (isError36 && error36Count >= kError36RediscoveryThreshold && error36Count < kError36AdapterResetThreshold)
+         {
+             ChipLogError(DeviceLayer, "Persistent error 36 (count: %u) - device object may be stale, attempting rediscovery", error36Count);
+             shouldRediscover = true;
++            // For error 36, try to disconnect first to clear any stale connection state
++            if (currentDevice != nullptr)
++            {
++                ChipLogDetail(DeviceLayer, "Disconnecting device before rediscovery (error 36)");
++                GAutoPtr<GError> discError;
++                if (!bluez_device1_call_disconnect_sync(currentDevice, nullptr, &discError.GetReceiver()))
++                {
++                    // Check if disconnect failed because device object is invalid
++                    if (discError != nullptr && g_error_matches(discError.get(), G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT))
++                    {
++                        ChipLogError(DeviceLayer, "Device object invalidated during disconnect (UNKNOWN_OBJECT) - treating as UNKNOWN_OBJECT");
++                        // Treat this as UNKNOWN_OBJECT - device object is invalid
++                        isUnknownObject = true;
++                        currentDevice = nullptr;
++                    }
++                    else if (discError != nullptr)
++                    {
++                        ChipLogDetail(DeviceLayer, "Disconnect note (non-fatal): %s", discError->message);
++                    }
++                }
++                // Process events to allow disconnect to complete
++                GMainContext * context = g_main_context_get_thread_default();
++                if (context == nullptr)
++                {
++                    context = g_main_context_default();
++                }
++                for (int j = 0; j < 5; j++)
++                {
++                    while (g_main_context_iteration(context, FALSE)) {}
++                    g_usleep(50 * 1000);  // 50ms per iteration
++                }
++            }	    
+         }
+ 	
+         if (shouldRediscover) 
+         {
+             if (deviceAddress != nullptr)
+             {
+-                // Re-discover device via ObjectManager by address
+-                // This gets a fresh Device1 object from BlueZ's object manager		    
+-                BluezDevice1 * newDevice = RediscoverDeviceByAddress(deviceAddress);
+-                if (newDevice != nullptr)
++                // Retry rediscovery up to 3 times before giving up
++                constexpr uint8_t kMaxRediscoveryAttempts = 3;
++                BluezDevice1 * newDevice = nullptr;
++                
++                for (uint8_t rediscoveryAttempt = 0; rediscoveryAttempt < kMaxRediscoveryAttempts; rediscoveryAttempt++)
++                {
++                    if (rediscoveryAttempt > 0)
++                    {
++                        ChipLogDetail(DeviceLayer, "Retrying device rediscovery (attempt %u/%u)", rediscoveryAttempt + 1, kMaxRediscoveryAttempts);
++                        // Wait a bit before retrying rediscovery
++                        g_usleep(500 * 1000);  // 500ms delay between rediscovery attempts
++                    }
++                    
++                    // Re-discover device via ObjectManager by address
++                    // This gets a fresh Device1 object from BlueZ's object manager
++                    newDevice = RediscoverDeviceByAddress(deviceAddress);
++                    if (newDevice != nullptr)
++                    {
++                        ChipLogDetail(DeviceLayer, "Device rediscovered via ObjectManager (attempt %u), retrying connection with new Device1 object", rediscoveryAttempt + 1);
++                        // Store rediscovered device (takes ownership of the reference)
++                        rediscoveredDevice.reset(newDevice);
++                        currentDevice = rediscoveredDevice.get();
++                        
++                        // Wait for device to be ready before connecting
++                        // Process events to allow device state to stabilize
++                        GMainContext * context = g_main_context_get_thread_default();
++                        if (context == nullptr)
++                        {
++                            context = g_main_context_default();
++                        }
++                        for (int j = 0; j < 10; j++)
++                        {
++                            while (g_main_context_iteration(context, FALSE)) {}
++                            g_usleep(100 * 1000);  // 100ms per iteration
++                        }
++                        
++                        // Additional delay for device to be fully ready (Pi 4 needs more time)
++                        g_usleep(500 * 1000);  // 500ms additional delay
++                        
++                        // Reset error count after successful rediscovery
++                        error36Count = 0;
++                        // Continue retry loop with new device object (don't count this as a retry)
++                        break;  // Break out of rediscovery retry loop
++                    }
++                }
++                
++                if (newDevice == nullptr)
+                 {
+-                    ChipLogDetail(DeviceLayer, "Device rediscovered via ObjectManager, retrying connection with new Device1 object");
+-                    // Store rediscovered device (takes ownership of the reference)
+-                    rediscoveredDevice.reset(newDevice);
+-                    currentDevice = rediscoveredDevice.get();
+-                    // Reset error count after successful rediscovery
+-                    error36Count = 0;
+-                    // Continue retry loop with new device object (don't count this as a retry)
+-                    continue;
++                    ChipLogError(DeviceLayer, "Failed to rediscover device %s via ObjectManager after %u attempts", deviceAddress, kMaxRediscoveryAttempts);
++                    // For UNKNOWN_OBJECT, we must break - device object is invalid and cannot be reused
++                    if (isUnknownObject)
++                    {
++                        // UNKNOWN_OBJECT means device object is gone - cannot continue
++                        break;
++                    }
++                    else
++                    {
++                        // Error 36: Rediscovery failed, but original device object might still be valid
++                        // Restore currentDevice to original for next retry attempt
++                        // Note: We only do this for error 36, not UNKNOWN_OBJECT
++                        if (currentDevice == nullptr)
++                        {
++                            currentDevice = &aDevice;
++                        }
++                        // Continue retry loop - may succeed on next attempt with original device
++                    }			
+                 }
+                 else
+                 {
+-                    ChipLogError(DeviceLayer, "Failed to rediscover device %s via ObjectManager", deviceAddress);
+-                    // If rediscovery fails, break out of retry loop
+-                    break;
++                    // Rediscovery succeeded - continue with new device object
++                    continue;			
+                 }
+             }
+             else
+             {
+                 ChipLogError(DeviceLayer, "Cannot rediscover device - address unknown");
+-                break;
++                // For UNKNOWN_OBJECT, we must break - cannot continue without address
++                if (isUnknownObject)
++                {
++                    break;
++                }		
+             }		
+         }
+ 
+-- 
+2.50.1
+

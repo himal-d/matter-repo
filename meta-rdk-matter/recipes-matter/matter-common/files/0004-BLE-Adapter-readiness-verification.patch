@@ -1,0 +1,110 @@
+From a787a2942d91f555d8c0d283b2882b7162bec4f2 Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Thu, 1 Jan 2026 11:09:36 +0530
+Subject: [PATCH 3/3] BLE: Adapter readiness verification before ConnectDevice
+
+%% original patch: 0004-BLE-Adapter-readiness-verification.patch
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 58 ++++++++++++++++++++++
+ src/platform/Linux/bluez/BluezEndpoint.h   |  2 +
+ 2 files changed, 60 insertions(+)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index f77ea7fd0c..6a4d56213c 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -594,6 +594,47 @@ void BluezEndpoint::Shutdown()
+     mIsInitialized = false;
+ }
+ 
++CHIP_ERROR BluezEndpoint::VerifyAdapterReadiness()
++{
++    VerifyOrReturnError(mAdapter != nullptr, CHIP_ERROR_INTERNAL);
++
++    // Check adapter properties via D-Bus
++    gboolean powered     = bluez_adapter1_get_powered(mAdapter.get());
++    gboolean discovering = bluez_adapter1_get_discovering(mAdapter.get());
++
++    // Adapter is ready if powered and not discovering
++    if (powered && !discovering)
++    {
++        ChipLogDetail(DeviceLayer, "Adapter is ready (powered: %d, discovering: %d)", powered, discovering);
++        return CHIP_NO_ERROR;
++    }
++
++    // Wait for adapter to become ready (with timeout)
++    constexpr uint32_t kAdapterReadinessTimeoutMs = 5000;
++    constexpr uint32_t kAdapterReadinessPollMs     = 100;
++    uint32_t waitTime                              = 0;
++
++    while (waitTime < kAdapterReadinessTimeoutMs)
++    {
++        usleep(kAdapterReadinessPollMs * 1000);
++        waitTime += kAdapterReadinessPollMs;
++
++        // Re-check adapter state
++        powered     = bluez_adapter1_get_powered(mAdapter.get());
++        discovering = bluez_adapter1_get_discovering(mAdapter.get());
++
++        if (powered && !discovering)
++        {
++            ChipLogDetail(DeviceLayer, "Adapter is ready after %u ms (powered: %d, discovering: %d)", waitTime, powered,
++                          discovering);
++            return CHIP_NO_ERROR;
++        }
++    }
++
++    ChipLogError(DeviceLayer, "Adapter readiness timeout: powered=%d, discovering=%d", powered, discovering);
++    return CHIP_ERROR_TIMEOUT;
++}
++
+ // ConnectDevice callbacks
+ 
+ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+@@ -605,6 +646,15 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+     // BlueZ returns "Software caused connection abort error", and we should make a connection retry.
+     // It's important to make sure that the connection is correctly ceased, by calling `Disconnect()`
+     // D-Bus method, or else `Connect()` returns immediately without any effect.
++
++    // Verify adapter readiness before connection attempt
++    CHIP_ERROR err = VerifyAdapterReadiness();
++    if (err != CHIP_NO_ERROR)
++    {
++        ChipLogError(DeviceLayer, "Adapter not ready: %" CHIP_ERROR_FORMAT, err.Format());
++        return err;
++    }
++
+     for (uint16_t i = 0; i < kMaxConnectRetries; i++)
+     {
+         GAutoPtr<GError> error;
+@@ -636,6 +686,14 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+ 
+         if (i > 0)
+         {
++            // Re-verify adapter readiness before retry
++            err = VerifyAdapterReadiness();
++            if (err != CHIP_NO_ERROR)
++            {
++                ChipLogError(DeviceLayer, "Adapter not ready before retry: %" CHIP_ERROR_FORMAT, err.Format());
++                // Continue retry loop, may succeed on next attempt
++            }
++		
+             // Reset BlueZ device state before retry
+             // Disconnect and remove device from cache to clear stale state
+             bluez_device1_call_disconnect_sync(&aDevice, nullptr, nullptr);
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.h b/src/platform/Linux/bluez/BluezEndpoint.h
+index 01821bf11c..737172199f 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.h
++++ b/src/platform/Linux/bluez/BluezEndpoint.h
+@@ -109,6 +109,8 @@ private:
+     void RegisterGattApplicationDone(GObject * aObject, GAsyncResult * aResult);
+     CHIP_ERROR RegisterGattApplicationImpl();
+ 
++    CHIP_ERROR VerifyAdapterReadiness();
++    
+     CHIP_ERROR ConnectDeviceImpl(BluezDevice1 & aDevice);
+ 
+     BluezObjectManager & mObjectManager;
+-- 
+2.50.1
+

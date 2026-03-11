@@ -1,0 +1,38 @@
+From 4cbf66f54f2fef3ad8a05542c6af6e3171bfff8a Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Thu, 1 Jan 2026 10:58:57 +0530
+Subject: [PATCH 1/3] BLE: Add delayed connect after scan to avoid error 36
+
+%% original patch: 0002-BLE-Add-delayed-connect-after-scan.patch
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 9915abceb4..af2051ca69 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -74,6 +74,7 @@
+ 
+ #include "BluezConnection.h"
+ #include "Types.h"
++#include <unistd.h>
+ 
+ #if !GLIB_CHECK_VERSION(2, 68, 0)
+ #define g_memdup2(mem, size) g_memdup(mem, static_cast<unsigned int>(size))
+@@ -627,6 +628,12 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+ 
+ CHIP_ERROR BluezEndpoint::ConnectDevice(BluezDevice1 & aDevice)
+ {
++    // Add delay after device discovery to allow BlueZ to stabilize
++    // This mitigates error 36 (le-connection-abort-by-local) that occurs
++    // when connecting immediately after device discovery
++    constexpr uint32_t kPostDiscoveryConnectDelayMs = 200;
++    usleep(kPostDiscoveryConnectDelayMs * 1000);
++	
+     auto params = std::make_pair(this, &aDevice);
+     mConnectCancellable.reset(g_cancellable_new());
+     return PlatformMgrImpl().GLibMatterContextInvokeSync(
+-- 
+2.50.1
+

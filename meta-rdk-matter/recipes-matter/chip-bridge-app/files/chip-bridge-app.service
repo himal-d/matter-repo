@@ -1,0 +1,20 @@
+[Unit]
+Description=Chip Bridge App for Matter IoT
+After=network.target avahi-daemon.service dbus.service
+Requires=avahi-daemon.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/rm -f /var/run/chip-bridge-app.pid
+ExecStart=/usr/bin/chip-bridge-app
+Restart=on-failure
+RestartSec=3
+Environment=CHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME="wlan0"
+Environment=CHIP_DEVICE_CONFIG_LINUX_DHCPC_CMD="udhcpc -b -i %s"
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
+PIDFile=/var/run/chip-bridge-app.pid
+
+[Install]
+WantedBy=multi-user.target

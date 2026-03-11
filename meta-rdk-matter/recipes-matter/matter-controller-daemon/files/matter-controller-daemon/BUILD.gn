@@ -1,0 +1,50 @@
+# Matter Controller Daemon - BUILD.gn
+# Persistent Matter Controller with BLE Commissioning and Multi-Admin Support
+
+import("//build_overrides/build.gni")
+import("//build_overrides/chip.gni")
+import("${build_root}/config/compiler/compiler.gni")
+
+import("${chip_root}/src/lib/lib.gni")
+import("${chip_root}/src/platform/device.gni")
+
+# Matter Controller Daemon executable
+executable("matter-controller-daemon") {
+  sources = [
+    "main.cpp",
+    "MatterController.cpp",
+  ]
+
+  deps = [
+    "//src/app:app",
+    "//src/controller:controller",
+    "//src/credentials:credentials",
+    "//src/lib:lib",
+    "//src/platform:platform",
+    "//src/platform/Linux:Linux",
+    "//src/system:system",
+    "//src/transport:transport",
+    "//src/ble:ble",
+    "//src/setup_payload:setup_payload",
+  ]
+
+  cflags = [
+    "-DCHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME=\"wlan0\"",
+    "-DCHIP_DEVICE_CONFIG_LINUX_DHCPC_CMD=\"udhcpc -b -i %s\"",
+    "-DCHIP_DEVICE_CONFIG_THREAD_INTERFACE_NAME=\"wpan0\"",
+    "-DCHIP_DEVICE_CONFIG_ENABLE_WIFI=1",
+    "-DCHIP_DEVICE_CONFIG_ENABLE_THREAD=1",
+    "-DCHIP_DEVICE_CONFIG_ENABLE_BLE=1",
+  ]
+
+  cflags_cc = [
+    "-std=c++17",
+    "-Wall",
+    "-Wextra",
+  ]
+
+  ldflags = [
+    "-pthread",
+  ]
+}
+

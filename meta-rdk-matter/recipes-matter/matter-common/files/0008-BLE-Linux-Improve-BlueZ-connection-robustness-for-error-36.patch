@@ -1,0 +1,214 @@
+From 33b80ccdf663ddebc355fd94f9aabd8a4ca0751d Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Mon, 5 Jan 2026 13:22:04 +0530
+Subject: [PATCH] BLE/Linux: Improve BlueZ connection robustness for error 36
+ on Raspberry Pi 4
+
+%% original patch: 0008-BLE-Linux-Improve-BlueZ-connection-robustness-for-error-36.patch
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 130 +++++++++++++++++----
+ 1 file changed, 106 insertions(+), 24 deletions(-)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 043e28a1ce..9567454354 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -759,8 +759,12 @@ BluezDevice1 * BluezEndpoint::RediscoverDeviceByAddress(const char * deviceAddre
+ 
+ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+ {
+-    constexpr uint32_t kRetryDelayMs = 1000;  // Increased delay for better stability
++    // Timing constants optimized for Raspberry Pi 4 (BCM43455) with Wi-Fi/BLE coexistence
++    // Pi 4 requires longer delays than typical Linux systems due to shared antenna
++    constexpr uint32_t kRetryDelayMs = 2000;  // Increased for Pi 4 coexistence
++    constexpr uint32_t kError36AdapterResetDelayMs = 3000;  // Delay after adapter reset for error 36	
+     constexpr uint16_t kError36RediscoveryThreshold = 2;  // After 2 error 36s, try rediscovery
++    constexpr uint16_t kError36AdapterResetThreshold = 3;  // After 3 error 36s, reset adapter
+ 	
+     // Due to radio interferences or Wi-Fi coexistence, sometimes the BLE connection may not be
+     // established (e.g. Connection Indication Packet is missed by BLE peripheral). In such case,
+@@ -834,6 +838,54 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+             ChipLogDetail(DeviceLayer, "Error 36 detected (count: %u, retry: %u)", error36Count, i + 1);	    
+         }
+ 
++        // Handle error 36 with adapter reset for Pi 4 Wi-Fi/BLE coexistence
++        // On Pi 4, error 36 often indicates HCI state corruption from Wi-Fi interference
++        // Power cycling the adapter resets HCI state and clears interference
++        if (isError36 && error36Count >= kError36AdapterResetThreshold && mAdapter != nullptr)
++         {
++            ChipLogError(DeviceLayer, "Persistent error 36 (count: %u) - resetting adapter HCI state for Pi 4 coexistence", error36Count);
++             
++            // Power cycle adapter to reset HCI state (critical for Pi 4)
++            gboolean wasPowered = bluez_adapter1_get_powered(mAdapter.get());
++            if (wasPowered)
++            {
++                ChipLogDetail(DeviceLayer, "Power cycling adapter to reset HCI state");
++                bluez_adapter1_set_powered(mAdapter.get(), FALSE);
++                
++                // Process GLib events to allow power-off to complete
++                GMainContext * context = g_main_context_get_thread_default();
++                if (context == nullptr)
++                {
++                    context = g_main_context_default();
++                }
++                for (int j = 0; j < 10; j++)
++                {
++                    while (g_main_context_iteration(context, FALSE)) {}
++                    g_usleep(50 * 1000);  // 50ms per iteration
++                }
++                
++                // Power on adapter
++                bluez_adapter1_set_powered(mAdapter.get(), TRUE);
++                
++                // Wait for adapter to fully initialize (Pi 4 needs longer)
++                g_usleep(1000 * 1000);  // 1000ms for adapter to stabilize
++                
++                // Verify adapter is ready
++                err = VerifyAdapterReadiness();
++                if (err != CHIP_NO_ERROR)
++                {
++                    ChipLogError(DeviceLayer, "Adapter not ready after reset: %" CHIP_ERROR_FORMAT, err.Format());
++                }
++                
++                // Extended delay after adapter reset for Pi 4
++                ChipLogDetail(DeviceLayer, "Waiting %u ms after adapter reset (Pi 4 coexistence)", kError36AdapterResetDelayMs);
++                usleep(kError36AdapterResetDelayMs * 1000);
++                
++                // Reset error count after adapter reset
++                error36Count = 0;
++            }
++        }
++        
+         // Handle device object invalidation: rediscover device via ObjectManager
+         // UNKNOWN_OBJECT: Device object was removed - rediscover immediately
+         // Error 36 (persistent): After 2+ occurrences, device object may be stale - rediscover
+@@ -843,11 +895,12 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+             ChipLogError(DeviceLayer, "Device object invalidated (UNKNOWN_OBJECT) - rediscovering immediately");
+             shouldRediscover = true;
+         }
+-        else if (isError36 && error36Count >= kError36RediscoveryThreshold)
++        else if (isError36 && error36Count >= kError36RediscoveryThreshold && error36Count < kError36AdapterResetThreshold)
+         {
+             ChipLogError(DeviceLayer, "Persistent error 36 (count: %u) - device object may be stale, attempting rediscovery", error36Count);
+             shouldRediscover = true;
+-        }	
++        }
++	
+         if (shouldRediscover) 
+         {
+             if (deviceAddress != nullptr)
+@@ -892,22 +945,47 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         // This clears any stale connection state
+         bluez_device1_call_disconnect_sync(currentDevice, nullptr, nullptr);
+ 
+-        if (i > 0)
++        // Process GLib events to allow disconnect to complete
++        GMainContext * context = g_main_context_get_thread_default();
++        if (context == nullptr)
++	{		
++            context = g_main_context_default();
++        }
++        for (int j = 0; j < 5; j++)
+         {
+-            // Re-verify adapter readiness before retry
++            while (g_main_context_iteration(context, FALSE)) {}
++            g_usleep(50 * 1000);  // 50ms per iteration
++        }
++
++        // Only delay and verify adapter on retries (not first attempt)
++        if (i > 0) 
++        {	
++            // Always verify adapter readiness before retry (including first retry)
++            // Pi 4 adapter state can be affected by Wi-Fi activity
+             err = VerifyAdapterReadiness();
+             if (err != CHIP_NO_ERROR)
+             {
+-                ChipLogError(DeviceLayer, "Adapter not ready before retry: %" CHIP_ERROR_FORMAT, err.Format());
+-                // Continue retry loop, may succeed on next attempt
++            	ChipLogError(DeviceLayer, "Adapter not ready before retry: %" CHIP_ERROR_FORMAT, err.Format());
++            	// Continue retry loop, may succeed on next attempt
++            }
++        
++            // Extended delays for Pi 4 Wi-Fi/BLE coexistence
++            // Error 36 requires longer delay to allow adapter to recover from interference
++            uint32_t delayMs;
++            if (isError36)
++            {
++            	// Error 36: Use extended delay (Pi 4 needs more time to recover)
++            	delayMs = kRetryDelayMs * 2;  // 4000ms for error 36
++            	ChipLogDetail(DeviceLayer, "Waiting %u ms before retry (error 36, Pi 4 coexistence)", delayMs);
++            }
++            else
++            {
++            	// Normal retry: Standard delay
++            	delayMs = kRetryDelayMs;  // 2000ms for normal retry	    
++            	ChipLogDetail(DeviceLayer, "Waiting %u ms before retry to allow BlueZ to stabilize", delayMs);
+             }
+-
+-            // For error 36, use longer delay to allow BlueZ to fully stabilize
+-            // This is critical for error 36 (le-connection-abort-by-local) recovery
+-            uint32_t delayMs = isError36 ? (kRetryDelayMs * 2) : kRetryDelayMs;
+-            ChipLogDetail(DeviceLayer, "Waiting %u ms before retry to allow BlueZ to stabilize", delayMs);
+             usleep(delayMs * 1000);
+-        }
++	}	    
+     }
+ 
+     BLEManagerImpl::HandleConnectFailed(CHIP_ERROR_INTERNAL);
+@@ -946,11 +1024,12 @@ CHIP_ERROR BluezEndpoint::WaitForDiscoveryToStop()
+         // We'll use a different approach: check if we can query adapter properties
+         // If discovery is active, BlueZ may reject connection attempts
+         
+-        // For now, use a conservative delay to ensure discovery has stopped
+-        // In practice, BlueZ typically stops discovery within 100-200ms
+-        if (waitTime >= 200)  // Conservative 200ms wait
+-        {
+-            ChipLogDetail(DeviceLayer, "Discovery stop wait complete after %u ms", waitTime);
++        // Pi 4 (BCM43455) with Wi-Fi/BLE coexistence requires longer wait
++        // Discovery stop can take 300-500ms due to shared antenna coordination
++        // Android/Darwin platforms have better coexistence or dedicated BLE hardware
++        if (waitTime >= 500)  // Increased from 200ms for Pi 4
++	{
++            ChipLogDetail(DeviceLayer, "Discovery stop wait complete after %u ms (Pi 4)", waitTime);	    
+             return CHIP_NO_ERROR;
+         }
+         
+@@ -998,6 +1077,8 @@ CHIP_ERROR BluezEndpoint::ConnectDevice(BluezDevice1 & aDevice)
+     // Step 1: Wait for discovery to fully stop
+     // BlueZ requires discovery to be stopped before connection attempts
+     // This is critical to prevent error 36 (le-connection-abort-by-local)
++    // On Pi 4 with Wi-Fi/BLE coexistence, discovery stop takes longer
++ 
+     CHIP_ERROR err = WaitForDiscoveryToStop();
+     if (err != CHIP_NO_ERROR)
+     {
+@@ -1005,7 +1086,7 @@ CHIP_ERROR BluezEndpoint::ConnectDevice(BluezDevice1 & aDevice)
+         // Continue anyway, but log the error
+     }
+     
+-    // Step 2: Prepare device for connection (set Trusted/Pairable)
++    // Step 2: Prepare device for connection 
+     err = PrepareDeviceForConnection(aDevice);
+     if (err != CHIP_NO_ERROR)
+     {
+@@ -1013,11 +1094,12 @@ CHIP_ERROR BluezEndpoint::ConnectDevice(BluezDevice1 & aDevice)
+         // Continue anyway, but log the error
+     }
+     
+-    // Step 3: Additional delay to ensure BlueZ state is stable
+-    // This gives BlueZ time to process discovery stop and device property changes
+-    constexpr uint32_t kPostDiscoveryConnectDelayMs = 500;  // Increased for better stability
+-    ChipLogDetail(DeviceLayer, "Waiting %u ms after discovery stop before connecting", kPostDiscoveryConnectDelayMs);
+-
++    // Step 3: Extended delay for Pi 4 Wi-Fi/BLE coexistence
++    // Pi 4 (BCM43455) shares antenna between Wi-Fi and BLE, requiring longer stabilization
++    // Android/Darwin platforms have dedicated BLE hardware or better coexistence handling
++    // This delay allows BlueZ to fully process discovery stop and adapter state to stabilize
++    constexpr uint32_t kPostDiscoveryConnectDelayMs = 1500;  // Increased from 500ms for Pi 4
++    ChipLogDetail(DeviceLayer, "Waiting %u ms after discovery stop before connecting (Pi 4 coexistence)", kPostDiscoveryConnectDelayMs);    
+     usleep(kPostDiscoveryConnectDelayMs * 1000);
+ 	
+     auto params = std::make_pair(this, &aDevice);
+-- 
+2.50.1
+

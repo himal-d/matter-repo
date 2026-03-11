@@ -1,0 +1,36 @@
+[Unit]
+Description=Bluetooth service
+After=hciuart.service
+Requires=hciuart.service
+Documentation=man:bluetoothd(8)
+ConditionPathIsDirectory=/sys/class/bluetooth
+
+[Service]
+Type=dbus
+BusName=org.bluez
+# small delay to let UART/HCI come up
+ExecStartPre=/bin/sleep 5
+
+# Recommended: explicit --experimental flag and --compat (safer), -n no-fork for systemd, -d for debug when needed
+ExecStart=/usr/lib/bluez5/bluetooth/bluetoothd --experimental --compat -n -d
+ExecStartPre=/usr/sbin/enable-hci.sh
+
+# Optional: send logs to journal and limit resource exposure
+NotifyAccess=main
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+LimitNPROC=50
+
+# Least privilege
+NoNewPrivileges=true
+
+# Real-time sandboxing
+RestrictRealtime=true
+
+# Optional: uncomment to persist logs to a file (useful during debugging)
+# StandardOutput=journal
+# StandardError=journal
+
+[Install]
+WantedBy=bluetooth.target
+Alias=dbus-org.bluez.service
+

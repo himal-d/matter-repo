@@ -1,0 +1,58 @@
+From 5dd2fcbb37e84480e1d055f3edddf754383e7308 Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Thu, 1 Jan 2026 12:26:14 +0530
+Subject: [PATCH 3/3] BLE: Enhanced retry logic with BlueZ device state reset
+
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 22 ++++------------------
+ 1 file changed, 4 insertions(+), 18 deletions(-)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 6a4d56213c..1bb6ccd789 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -667,21 +667,7 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         ChipLogError(DeviceLayer, "FAIL: ConnectDevice: %s (%d)", error->message, error->code);
+         if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_DBUS_ERROR))
+         {
+-            // Check if this is error 36 (le-connection-abort-by-local)
+-            const char * errorMsg = error->message;
+-            if (errorMsg != nullptr &&
+-                (strstr(errorMsg, "le-connection-abort-by-local") != nullptr ||
+-                 strstr(errorMsg, "connection abort") != nullptr ||
+-                 strstr(errorMsg, "(36)") != nullptr))
+-            {
+-                ChipLogError(DeviceLayer, "FAIL: ConnectDevice: %s", errorMsg);
+-                // Continue retry loop for error 36
+-            }
+-            else
+-            {
+-                // Non-retryable error, break
+-                break;
+-            }
++	    break;
+         }
+ 
+         if (i > 0)
+@@ -694,15 +680,15 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+                 // Continue retry loop, may succeed on next attempt
+             }
+ 		
+-            // Reset BlueZ device state before retry
+-            // Disconnect and remove device from cache to clear stale state
++            // Reset BlueZ device state before retry to clear stale connection state
++            // This is critical for error 36 (le-connection-abort-by-local) recovery 
+             bluez_device1_call_disconnect_sync(&aDevice, nullptr, nullptr);
+             const char * devicePath = g_dbus_proxy_get_object_path(reinterpret_cast<GDBusProxy *>(&aDevice));
+             if (devicePath != nullptr && mAdapter != nullptr)
+             {
+                 bluez_adapter1_call_remove_device_sync(mAdapter.get(), devicePath, nullptr, nullptr);
+             }
+-            // Delay before retry
++            // Delay before retry to allow BlueZ to stabilize
+             usleep(kRetryDelayMs * 1000);		
+         }
+ 
+-- 
+2.50.1
+

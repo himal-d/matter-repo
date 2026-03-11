@@ -1,0 +1,27 @@
+# External BLE Adapter udev Rules
+# Prioritize external BLE adapters over onboard Pi 4 BLE
+# Production workaround for Raspberry Pi 4 BCM43455 BLE issues
+
+# CSR8510 (Cambridge Silicon Radio) - Recommended
+SUBSYSTEM=="bluetooth", ATTRS{idVendor}=="0a12", ATTRS{idProduct}=="0001", \
+    ATTR{address}=="?*", ENV{ID_BT}="1", ENV{ID_BT_TYPE}="external"
+
+# Intel AX200 (USB)
+SUBSYSTEM=="bluetooth", ATTRS{idVendor}=="8087", ATTRS{idProduct}=="0029", \
+    ATTR{address}=="?*", ENV{ID_BT}="1", ENV{ID_BT_TYPE}="external"
+
+# Realtek RTL8761B
+SUBSYSTEM=="bluetooth", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="8771", \
+    ATTR{address}=="?*", ENV{ID_BT}="1", ENV{ID_BT_TYPE}="external"
+
+# Nordic nRF52840 (as BLE adapter)
+SUBSYSTEM=="bluetooth", ATTRS{idVendor}=="1915", ATTRS{idProduct}=="521f", \
+    ATTR{address}=="?*", ENV{ID_BT}="1", ENV{ID_BT_TYPE}="external"
+
+# Mark onboard BLE (Broadcom BCM43455) as internal
+SUBSYSTEM=="bluetooth", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2b4c", \
+    ATTR{address}=="?*", ENV{ID_BT_TYPE}="internal"
+
+SUBSYSTEM=="bluetooth", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2763", \
+    ATTR{address}=="?*", ENV{ID_BT_TYPE}="internal"
+

@@ -1,0 +1,280 @@
+From 740d9b6b25a3252b4f0ad9498db8306b8529395a Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Thu, 1 Jan 2026 15:51:42 +0530
+Subject: [PATCH] BLE: Add Re-discover Device when the object becomes invalid
+
+%% original patch: 0005-BLE-Add-Rediscover-Device-when-the-object-becomes-invalid.patch
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 202 +++++++++++++++++++--
+ src/platform/Linux/bluez/BluezEndpoint.h   |   8 +-
+ 2 files changed, 195 insertions(+), 15 deletions(-)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 4447de6442..5c8c46f5d0 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -631,11 +631,136 @@ CHIP_ERROR BluezEndpoint::VerifyAdapterReadiness()
+     return CHIP_ERROR_TIMEOUT;
+ }
+ 
++// Helper to safely remove and rediscover device after invalidation
++BluezDevice1 * BluezEndpoint::RediscoverDeviceByAddress(const char * deviceAddress)
++{
++    if (deviceAddress == nullptr || mAdapter == nullptr)
++    {
++        return nullptr;
++    }
++
++    ChipLogDetail(DeviceLayer, "Attempting to rediscover device at address: %s", deviceAddress);
++
++    // Step 1: Safely find device path first (before any modifications)
++    const char * devicePathToRemove = nullptr;
++    {
++        BluezObjectList objects = mObjectManager.GetObjects();
++        for (BluezObject & object : objects)
++        {
++            GAutoPtr<BluezDevice1> device(bluez_object_get_device1(&object));
++            if (device != nullptr)
++            {
++                const char * devAddress = bluez_device1_get_address(device.get());
++                if (devAddress != nullptr && strcmp(devAddress, deviceAddress) == 0)
++                {
++                    devicePathToRemove = g_dbus_proxy_get_object_path(reinterpret_cast<GDBusProxy *>(device.get()));
++                    if (devicePathToRemove != nullptr)
++                    {
++                        devicePathToRemove = g_strdup(devicePathToRemove);  // Make a copy for safety
++                    }
++                    break;
++                }
++            }
++        }
++    }
++
++    // Step 2: Remove device from cache (using the saved path, avoiding iteration during removal)
++    if (devicePathToRemove != nullptr)
++    {
++        ChipLogDetail(DeviceLayer, "Removing device %s (path: %s) from cache to force re-discovery", deviceAddress, devicePathToRemove);
++        
++        GAutoPtr<GError> error;
++        bluez_adapter1_call_remove_device_sync(mAdapter.get(), devicePathToRemove, nullptr, &error.GetReceiver());
++        if (error != nullptr && !g_error_matches(error.get(), G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT))
++        {
++            ChipLogDetail(DeviceLayer, "Device removal note: %s", error->message);
++        }
++        g_free(const_cast<char *>(devicePathToRemove));
++    }
++    else
++    {
++        ChipLogDetail(DeviceLayer, "Device %s not found in cache, may already be removed", deviceAddress);
++    }
++
++    // Step 3: Ensure discovery is active (required for re-discovery)
++    // Attempt to start discovery - if already active, BlueZ will return an error we can ignore
++    ChipLogDetail(DeviceLayer, "Ensuring discovery is active for re-discovery");
++    GAutoPtr<GError> discError;
++    if (!bluez_adapter1_call_start_discovery_sync(mAdapter.get(), nullptr, &discError.GetReceiver()))
++    {
++        if (discError != nullptr)
++        {
++            // Ignore "Already discovering" errors - check error message for BlueZ-specific errors
++            // BlueZ returns "Already discovering" or similar when discovery is already active
++            const char * errorMsg = discError->message;
++            bool isAlreadyDiscovering = (errorMsg != nullptr &&
++                                        (strstr(errorMsg, "Already") != nullptr ||
++                                         strstr(errorMsg, "already") != nullptr ||
++                                         strstr(errorMsg, "in progress") != nullptr));
++
++            if (!isAlreadyDiscovering)
++            {
++                ChipLogDetail(DeviceLayer, "Discovery start note: %s", errorMsg);
++            }
++        }
++    }    
++
++    // Step 4: Non-blocking wait for device re-discovery using GLib event processing
++    // Process pending GLib events to allow OnDeviceAdded signals to be delivered
++    constexpr uint32_t kRediscoveryWaitMs = 3000;
++    constexpr uint32_t kRediscoveryPollMs = 100;  // Smaller poll interval for better responsiveness
++    constexpr uint32_t kMaxIterations = (kRediscoveryWaitMs / kRediscoveryPollMs);
++    
++    GMainContext * context = g_main_context_get_thread_default();
++    if (context == nullptr)
++    {
++        context = g_main_context_default();
++    }
++
++    ChipLogDetail(DeviceLayer, "Waiting up to %u ms for device re-discovery (non-blocking)...", kRediscoveryWaitMs);
++
++    for (uint32_t iteration = 0; iteration < kMaxIterations; iteration++)
++    {
++        // Process pending GLib events without blocking (allows OnDeviceAdded to fire)
++        while (g_main_context_iteration(context, FALSE))
++        {
++            // Process all pending events
++        }
++
++        // Search for the rediscovered device by address
++        BluezObjectList objects = mObjectManager.GetObjects();
++        for (BluezObject & object : objects)
++        {
++            GAutoPtr<BluezDevice1> device(bluez_object_get_device1(&object));
++            if (device != nullptr)
++            {
++                const char * devAddress = bluez_device1_get_address(device.get());
++                if (devAddress != nullptr && strcmp(devAddress, deviceAddress) == 0)
++                {
++                    // Found the device - return a new reference (caller must unref)
++                    uint32_t elapsedMs = iteration * kRediscoveryPollMs;
++                    ChipLogDetail(DeviceLayer, "Device rediscovered after %u ms", elapsedMs);
++                    return reinterpret_cast<BluezDevice1 *>(g_object_ref(device.get()));
++                }
++            }
++        }
++
++        // Small delay using GLib's time source (non-blocking for event loop)
++        // Use g_usleep which yields to the event loop on some systems, but we're already
++        // processing events above, so a minimal delay is acceptable here
++        g_usleep(kRediscoveryPollMs * 1000);
++    }
++
++    ChipLogError(DeviceLayer, "Device %s not rediscovered after %u ms", deviceAddress, kRediscoveryWaitMs);
++    return nullptr;
++}
++
+ // ConnectDevice callbacks
+ 
+ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+ {
+     constexpr uint32_t kRetryDelayMs = 1000;  // Increased delay for better stability
++    constexpr uint16_t kError36RediscoveryThreshold = 2;  // After 2 error 36s, try rediscovery
+ 	
+     // Due to radio interferences or Wi-Fi coexistence, sometimes the BLE connection may not be
+     // established (e.g. Connection Indication Packet is missed by BLE peripheral). In such case,
+@@ -651,10 +776,16 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         return err;
+     }
+ 
++    // Get device address early for potential rediscovery
++    const char * deviceAddress = bluez_device1_get_address(&aDevice);
++    BluezDevice1 * currentDevice = &aDevice;  // Start with the provided device
++    GAutoPtr<BluezDevice1> rediscoveredDevice;  // Will hold rediscovered device if needed
++    uint16_t error36Count = 0;
++
+     for (uint16_t i = 0; i < kMaxConnectRetries; i++)
+     {
+         GAutoPtr<GError> error;
+-        if (bluez_device1_call_connect_sync(&aDevice, mConnectCancellable.get(), &error.GetReceiver()))
++        if (bluez_device1_call_connect_sync(currentDevice, mConnectCancellable.get(), &error.GetReceiver()))		
+         {
+             ChipLogDetail(DeviceLayer, "ConnectDevice complete");
+             return CHIP_NO_ERROR;
+@@ -662,23 +793,66 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+ 
+         ChipLogError(DeviceLayer, "FAIL: ConnectDevice: %s (%d)", error->message, error->code);
+ 
+-        // Check if this is error 36 (le-connection-abort-by-local) specifically
++        // Check if device object became invalid (UnknownObject error)
++        bool isUnknownObject = g_error_matches(error.get(), G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT);
++        
++        // Check for error 36 (le-connection-abort-by-local) using proper error matching
++        // Error 36 comes as org.bluez.Error.Failed with message "le-connection-abort-by-local (36)" 
+         bool isError36 = false;
+-        if (error->message != nullptr)
++        if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_DBUS_ERROR))		
+         {
+-            const char * errorMsg = error->message;
+-            isError36 = (strstr(errorMsg, "le-connection-abort-by-local") != nullptr ||
+-                        strstr(errorMsg, "connection abort") != nullptr ||
+-                        strstr(errorMsg, "(36)") != nullptr);
++            // Verify it's a D-Bus error
++            if (error->domain == g_dbus_error_quark())
++            {
++                // Error 36 is uniquely identified by the error code "(36)" in the message
++                // This is the most reliable way to detect it across BlueZ versions
++                if (error->message != nullptr)
++                {
++                    const char * msg = error->message;
++                    // Check for the error code pattern: "(36)" - this is BlueZ's way of reporting HCI error 36
++                    if (strstr(msg, "(36)") != nullptr)
++                    {
++                        isError36 = true;
++                    }
++                }
++            }	    
+         }
+         
+-        // Check if device object became invalid (UnknownObject error)
+-        bool isUnknownObject = g_error_matches(error.get(), G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT);
+-        
+-        if (isUnknownObject)
++        if (isError36)
++        {
++            error36Count++;
++        }
++
++        // Handle device invalidation: rediscover device
++        // Trigger rediscovery on UnknownObject or after persistent error 36 
++        if (isUnknownObject || (isError36 && error36Count >= kError36RediscoveryThreshold && i >= kError36RediscoveryThreshold))
+         {
+-            ChipLogError(DeviceLayer, "Device object invalidated, cannot retry");
+-            break;
++            ChipLogError(DeviceLayer, "Device object invalidated or persistent error 36 (count: %u) - attempting rediscovery", error36Count);
++            
++            if (deviceAddress != nullptr)
++            {
++                // Try to rediscover the device (non-blocking, uses GLib event processing)
++                BluezDevice1 * newDevice = RediscoverDeviceByAddress(deviceAddress);
++                if (newDevice != nullptr)
++                {
++                    ChipLogDetail(DeviceLayer, "Device rediscovered, retrying connection with new device object");
++                    // Store rediscovered device (takes ownership of the reference)
++                    rediscoveredDevice.reset(newDevice);
++                    currentDevice = rediscoveredDevice.get();
++                    // Continue retry loop with new device object
++                    continue;
++                }
++                else
++                {
++                    ChipLogError(DeviceLayer, "Failed to rediscover device %s", deviceAddress);
++                    break;
++                }
++            }
++            else
++            {
++                ChipLogError(DeviceLayer, "Cannot rediscover device - address unknown");
++                break;
++            }		
+         }
+ 
+         if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_DBUS_ERROR))
+@@ -691,7 +865,7 @@ CHIP_ERROR BluezEndpoint::ConnectDeviceImpl(BluezDevice1 & aDevice)
+         
+         // Ensure device is disconnected before retry attempt
+         // This clears any stale connection state
+-        bluez_device1_call_disconnect_sync(&aDevice, nullptr, nullptr);
++        bluez_device1_call_disconnect_sync(currentDevice, nullptr, nullptr);
+ 
+         if (i > 0)
+         {
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.h b/src/platform/Linux/bluez/BluezEndpoint.h
+index 737172199f..137be6556b 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.h
++++ b/src/platform/Linux/bluez/BluezEndpoint.h
+@@ -110,7 +110,13 @@ private:
+     CHIP_ERROR RegisterGattApplicationImpl();
+ 
+     CHIP_ERROR VerifyAdapterReadiness();
+-    
++
++    // Helper to safely remove and rediscover device after invalidation
++    // Uses non-blocking event processing to wait for device re-discovery
++    // Returns a new device object reference if found, nullptr otherwise
++    // Caller is responsible for unreffing the returned object
++    BluezDevice1 * RediscoverDeviceByAddress(const char * deviceAddress);
++
+     CHIP_ERROR ConnectDeviceImpl(BluezDevice1 & aDevice);
+ 
+     BluezObjectManager & mObjectManager;
+-- 
+2.50.1
+

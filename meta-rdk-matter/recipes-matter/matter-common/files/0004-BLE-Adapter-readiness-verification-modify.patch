@@ -1,0 +1,69 @@
+From 415bf1c4cb7b720c06a76e7876e904c2c29f8ea3 Mon Sep 17 00:00:00 2001
+From: "himal.d" <himal.d@tataelxsi.co.in>
+Date: Thu, 1 Jan 2026 12:38:51 +0530
+Subject: [PATCH] BLE: Adapter readiness verification before ConnectDevice
+
+---
+ src/platform/Linux/bluez/BluezEndpoint.cpp | 28 ++++++++++------------
+ 1 file changed, 12 insertions(+), 16 deletions(-)
+
+diff --git a/src/platform/Linux/bluez/BluezEndpoint.cpp b/src/platform/Linux/bluez/BluezEndpoint.cpp
+index 1bb6ccd789..3fbb69697a 100644
+--- a/src/platform/Linux/bluez/BluezEndpoint.cpp
++++ b/src/platform/Linux/bluez/BluezEndpoint.cpp
+@@ -598,21 +598,20 @@ CHIP_ERROR BluezEndpoint::VerifyAdapterReadiness()
+ {
+     VerifyOrReturnError(mAdapter != nullptr, CHIP_ERROR_INTERNAL);
+ 
+-    // Check adapter properties via D-Bus
+-    gboolean powered     = bluez_adapter1_get_powered(mAdapter.get());
+-    gboolean discovering = bluez_adapter1_get_discovering(mAdapter.get());
++    // Check if adapter is powered
++    gboolean powered = bluez_adapter1_get_powered(mAdapter.get());    
+ 
+-    // Adapter is ready if powered and not discovering
+-    if (powered && !discovering)
++    // Adapter is ready if powered
++    if (powered)	    
+     {
+-        ChipLogDetail(DeviceLayer, "Adapter is ready (powered: %d, discovering: %d)", powered, discovering);
++        ChipLogDetail(DeviceLayer, "Adapter is ready (powered: %d)", powered);	    
+         return CHIP_NO_ERROR;
+     }
+ 
+     // Wait for adapter to become ready (with timeout)
+-    constexpr uint32_t kAdapterReadinessTimeoutMs = 5000;
+-    constexpr uint32_t kAdapterReadinessPollMs     = 100;
+-    uint32_t waitTime                              = 0;
++    constexpr uint32_t kAdapterReadinessTimeoutMs = 2000;
++    constexpr uint32_t kAdapterReadinessPollMs    = 100;
++    uint32_t waitTime                             = 0;
+ 
+     while (waitTime < kAdapterReadinessTimeoutMs)
+     {
+@@ -620,18 +619,15 @@ CHIP_ERROR BluezEndpoint::VerifyAdapterReadiness()
+         waitTime += kAdapterReadinessPollMs;
+ 
+         // Re-check adapter state
+-        powered     = bluez_adapter1_get_powered(mAdapter.get());
+-        discovering = bluez_adapter1_get_discovering(mAdapter.get());
++        powered = bluez_adapter1_get_powered(mAdapter.get());
+ 
+-        if (powered && !discovering)
++        if (powered)
+         {
+-            ChipLogDetail(DeviceLayer, "Adapter is ready after %u ms (powered: %d, discovering: %d)", waitTime, powered,
+-                          discovering);
++            ChipLogDetail(DeviceLayer, "Adapter is ready after %u ms (powered: %d)", waitTime, powered);
+             return CHIP_NO_ERROR;
+         }
+     }
+-
+-    ChipLogError(DeviceLayer, "Adapter readiness timeout: powered=%d, discovering=%d", powered, discovering);
++    ChipLogError(DeviceLayer, "Adapter readiness timeout: powered=%d", powered);
+     return CHIP_ERROR_TIMEOUT;
+ }
+ 
+-- 
+2.50.1
+

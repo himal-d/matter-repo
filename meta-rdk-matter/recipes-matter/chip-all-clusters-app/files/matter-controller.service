@@ -1,0 +1,78 @@
+[Unit]
+Description=Matter Primary Controller with BLE Commissioning
+Documentation=https://github.com/project-chip/connectedhomeip
+After=network-online.target avahi-daemon.service dbus.service ot-br-posix.service bluetooth.service
+Wants=network-online.target
+Requires=avahi-daemon.service bluetooth.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Create storage directory before starting
+ExecStartPre=/bin/mkdir -p /var/lib/matter-controller
+ExecStartPre=/bin/chown root:root /var/lib/matter-controller
+ExecStartPre=/bin/chmod 755 /var/lib/matter-controller
+
+# Wait for BlueZ to be fully ready (Pi 4 workaround)
+ExecStartPre=/bin/bash -c 'while ! bluetoothctl show 2>/dev/null | grep -q "Powered: yes"; do sleep 0.5; done'
+ExecStartPre=/bin/sleep 2
+
+# Wait for Thread interface
+ExecStartPre=/bin/sh -c 'while ! ip link show wpan0 >/dev/null 2>&1; do sleep 1; done'
+
+# Main executable - chip-all-clusters-app
+# ⚠️ NOTE: chip-all-clusters-app is a Matter DEVICE endpoint, not a controller
+# It can act as a controller but with limited functionality
+# For full controller features, consider using chip-tool or a custom controller app
+#
+# Available arguments (from --help):
+# --ble-device <number>          BLE device number (e.g., 0 for hci0)
+# --discriminator <n>             Discriminator for commissioning
+# --passcode <code>               Passcode for commissioning
+# --capabilities <mask>           Discovery capabilities (BLE = 1 << 1)
+# --thread                        Enable Thread management
+# --KVS <filepath>                Key Value Store file path
+ExecStart=/usr/bin/chip-all-clusters-app \
+    --ble-device 0 \
+    --discriminator 3840 \
+    --passcode 12345678 \
+    --capabilities 2 \
+    --thread \
+    --KVS /var/lib/matter-controller/chip_kvs
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Environment variables
+Environment="CHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME=wlan0"
+Environment="CHIP_DEVICE_CONFIG_LINUX_DHCPC_CMD=udhcpc -b -i %s"
+Environment="CHIP_DEVICE_CONFIG_THREAD_INTERFACE_NAME=wpan0"
+Environment="CHIP_STORAGE_DIR=/var/lib/matter-controller"
+Environment="CHIP_KVS_PATH=/var/lib/matter-controller/chip_kvs"
+Environment="CHIP_FACTORY_CONFIG_PATH=/var/lib/matter-controller/chip_factory.ini"
+Environment="CHIP_CONFIG_PATH=/var/lib/matter-controller/chip_config.ini"
+
+# Security and resource limits
+NoNewPrivileges=false
+PrivateTmp=yes
+# Note: ReadWritePaths requires directory to exist before namespace creation
+# Directory is created in ExecStartPre, so we can't use ReadWritePaths here
+# Instead, ensure directory exists before service starts (via tmpfiles.d or manual creation)
+LimitNOFILE=65536
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=matter-controller
+
+# PID file
+PIDFile=/run/matter-controller.pid
+
+[Install]
+WantedBy=multi-user.target
+

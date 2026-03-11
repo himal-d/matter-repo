@@ -1,0 +1,17 @@
+[Unit]
+Description=Configure BLE Adapter Parameters for Matter
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Wait for BlueZ to fully initialize adapter before configuring
+ExecStartPre=/bin/bash -c 'for i in 1 2 3 4 5; do if bluetoothctl show 2>/dev/null | grep -q "Powered: yes"; then exit 0; fi; sleep 2; done; exit 0'
+# Retry configuration if adapter not ready (up to 3 attempts with 5s delay)
+ExecStart=/bin/bash -c 'for i in 1 2 3; do /usr/bin/configure-ble-params && exit 0; sleep 5; done; exit 1'
+
+[Install]
+WantedBy=multi-user.target
+
+
